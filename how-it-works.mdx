@@ -61,16 +61,24 @@ Each AES-CTR context is advanced past the first 64 bytes (the init block) before
 
 ## WebSocket Connection to Telegram
 
-For each session the proxy connects to Telegram using a raw TLS WebSocket upgrade. The target URL follows Telegram's own WebSocket domain convention:
+For each session the proxy connects to Telegram using a raw TLS WebSocket upgrade. The target domains follow Telegram's own WebSocket domain convention, with two variants per DC. The ordering depends on whether the connection is for a regular or media DC:
+
+- **Regular DC**: `kws{dc}.web.telegram.org` is tried first, then `kws{dc}-1.web.telegram.org` as a fallback.
+- **Media DC**: `kws{dc}-1.web.telegram.org` is tried first, then `kws{dc}.web.telegram.org` as a fallback.
+
+DC 203 is remapped to DC 2 for domain construction (`kws2.web.telegram.org` / `kws2-1.web.telegram.org`).
+
+The WebSocket upgrade path is always `/apiws`:
 
 ```
 wss://kws{dc}.web.telegram.org/apiws
+wss://kws{dc}-1.web.telegram.org/apiws
 ```
 
-For media DCs and as a secondary domain, `kws{dc}-1.web.telegram.org` is also tried. The TCP connection is made directly to the DC's IP address (configured via `--dc-ip`), but the TLS SNI and the `Host` header carry the `kws{dc}.web.telegram.org` domain name. Once the WebSocket handshake is complete the proxy sends the 64-byte relay init packet and starts the bidirectional bridge.
+The TCP connection is made directly to the DC's IP address (configured via `--dc-ip`), but the TLS SNI and the `Host` header carry the appropriate `kws{dc}[‑1].web.telegram.org` domain name. Once the WebSocket handshake is complete the proxy sends the 64-byte relay init packet and starts the bidirectional bridge.
 
 <Tip>
-The WS upgrade path is always `/apiws`. Telegram's WebSocket endpoints require this specific path and reject anything else.
+Telegram's WebSocket endpoints require the `/apiws` path and reject anything else. The domain ordering ensures the statistically preferred domain is tried first for each connection type.
 </Tip>
 
 ## Fallback Chain

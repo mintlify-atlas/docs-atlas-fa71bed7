@@ -105,12 +105,12 @@ The following names are exported from the top-level `proxy` package (`proxy/__in
 
 ```python
 from proxy import (
-    __version__,       # str  — "1.7.1"
-    proxy_config,      # ProxyConfig — global configuration singleton
-    parse_dc_ip_list,  # function
-    coerce_domain_list,# function
-    get_link_host,     # function
-    run_proxy,         # function
+    __version__,        # str  — "1.7.1"
+    proxy_config,       # ProxyConfig — global configuration singleton
+    parse_dc_ip_list,   # function
+    coerce_domain_list, # function
+    get_link_host,      # function
+    build_github_opener,# function
 )
 ```
 
@@ -159,18 +159,18 @@ Duplicate entries (compared case-insensitively) are removed while preserving ord
 ### `get_link_host`
 
 ```python
-def get_link_host(host: str) -> str
+def get_link_host(host: str) -> Optional[str]
 ```
 
-Returns a linkable host string from the configured bind address. When `host` is `"0.0.0.0"` or `"::"` it returns `"127.0.0.1"` so that the generated `tg://proxy` link points to localhost.
+Returns a linkable host string from the configured bind address. When `host` is `"0.0.0.0"`, it determines the machine's outbound IPv4 address by opening a UDP socket toward `8.8.8.8` and reading the local endpoint; falls back to `"127.0.0.1"` on failure. For any other value, the host is returned unchanged.
 
-### `run_proxy`
+### `build_github_opener`
 
 ```python
-def run_proxy(stop_event: Optional[asyncio.Event] = None) -> None
+def build_github_opener() -> urllib.request.OpenerDirector
 ```
 
-Programmatic entry point. Calls `asyncio.run(_run(stop_event))`. Pass an `asyncio.Event` to stop the server gracefully from another thread (GUI apps set this event on window close).
+Returns a `urllib` opener with a pinned-IP HTTPS handler for `raw.githubusercontent.com` and `release-assets.githubusercontent.com`. The handler resolves those hostnames to a hardcoded IP (`185.199.109.133`) rather than using the system resolver, which allows the proxy to fetch the CF domain list and update manifests even when DNS is blocked or poisoned.
 
 ---
 

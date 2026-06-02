@@ -1,5 +1,5 @@
 ---
-title: "Fake TLS Masking with Nginx for TG WS Proxy"
+title: "Fake TLS Masking and Nginx SNI Routing for TG WS Proxy"
 sidebarTitle: "Fake TLS + Nginx"
 description: "Configure TG WS Proxy with Fake TLS (ee-secret) and nginx stream-module SNI routing to mask proxy traffic as regular HTTPS on port 443."
 ---
@@ -23,7 +23,7 @@ Fake TLS is a masking layer that makes TG WS Proxy traffic indistinguishable fro
 With Fake TLS enabled, the proxy generates an `ee`-prefixed secret link:
 
 ```
-tg://proxy?server=your.domain.com&port=443&secret=ee<32-hex-secret><domain-in-hex>
+tg://proxy?server=your.domain.com&port=443&secret=ee<secret><domain-hex>
 ```
 
 The domain portion is encoded as ASCII hex. TG WS Proxy prints the full ready-to-use link to the log at startup — you do not need to construct it manually.

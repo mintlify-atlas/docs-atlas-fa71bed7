@@ -126,14 +126,24 @@ export default {
 			try {
 				while (true) {
 					const { value, done } = await tcpReader.read();
-					if (done) break;
-					if (value) server.send(value);
+					if (done) {
+						break;
+					}
+					if (value) {
+						server.send(value);
+					}
 				}
 			} catch {
 			} finally {
-				try { server.close(); } catch {}
-				try { tcpReader.releaseLock(); } catch {}
-				try { socket.close(); } catch {}
+				try {
+					server.close();
+				} catch {}
+				try {
+					tcpReader.releaseLock();
+				} catch {}
+				try {
+					socket.close();
+				} catch {}
 			}
 		})();
 

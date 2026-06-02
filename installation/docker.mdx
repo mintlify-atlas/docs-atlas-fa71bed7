@@ -1,5 +1,5 @@
 ---
-title: "Deploy TG WS Proxy with Docker"
+title: "Deploy TG WS Proxy with Docker: Container Setup Guide"
 sidebarTitle: "Docker"
 description: "Run TG WS Proxy in a Docker container for server-side deployment, configuring host, port, secret, and DC IPs via environment variables."
 ---
@@ -54,7 +54,7 @@ All proxy settings are passed as environment variables at container start time:
 |---|---|---|
 | `TG_WS_PROXY_HOST` | `0.0.0.0` | Interface address the proxy listens on inside the container |
 | `TG_WS_PROXY_PORT` | `1443` | Port the proxy listens on inside the container |
-| `TG_WS_PROXY_SECRET` | *(random)* | 32-character hex secret used to authenticate clients; auto-generated if left empty |
+| `TG_WS_PROXY_SECRET` | `""` (empty) | 32-character hex secret used to authenticate clients; auto-generated when empty |
 | `TG_WS_PROXY_DC_IPS` | `2:149.154.167.220 4:149.154.167.220` | Space-separated list of `DC:IP` pairs the proxy will forward traffic to |
 
 ## Custom Secret

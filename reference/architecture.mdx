@@ -1,0 +1,263 @@
+---
+title: "TG WS Proxy Internal Architecture and Module Reference"
+sidebarTitle: "Architecture"
+description: "Explore TG WS Proxy's internal modules: the asyncio server, MTProto handshake, AES-CTR re-encryption, WebSocket pool, and Cloudflare fallback chain."
+---
+
+This page documents TG WS Proxy's internal design for contributors and advanced users who want to understand how the proxy works under the hood. It covers every module in the `proxy/` package, the public Python API, all configuration fields, the stats subsystem, and the MTProto transport tags that the proxy recognises. The current release is **version 1.7.1**.
+
+## Module Overview
+
+The core engine lives entirely inside the `proxy/` package. Each module has a single, well-scoped responsibility.
+
+### `proxy/tg_ws_proxy.py`
+
+The main asyncio server and client handler. Responsibilities:
+
+- **`main()`** — CLI entry point; parses `argparse` arguments, applies them to `proxy_config`, and calls `asyncio.run(_run())`.
+- **`run_proxy(stop_event=None)`** — programmatic entry point; wraps `_run()` in `asyncio.run()` for embedding in GUI apps.
+- **`_run(stop_event)`** — resets pools, starts the CF domain refresh background thread, opens the TCP server with `asyncio.start_server`, warms up the WS pool, and launches the periodic stats-log task (every 60 s).
+- **`_handle_client(reader, writer, secret)`** — per-connection coroutine. Reads the client init, parses the MTProto handshake, derives crypto keys, looks up the target DC, attempts a WebSocket connection (with pool), and falls back to CF proxy or direct TCP when WS is unavailable.
+- **`_try_handshake(handshake, secret)`** — decrypts the 64-byte obfuscation header and validates the protocol tag and DC index.
+- **`_generate_relay_init(proto_tag, dc_idx)`** — builds the 64-byte obfuscated init packet that is forwarded to Telegram.
+- **`_build_crypto_ctx(client_dec_prekey_iv, secret, relay_init)`** — derives AES-CTR keys for all four directions (client decrypt/encrypt, Telegram encrypt/decrypt) and returns a `CryptoCtx`.
+
+A DC that fails all WebSocket attempts enters a 30-second cool-down (`DC_FAIL_COOLDOWN`). If every domain returns an HTTP 3xx redirect, the DC key is added to `ws_blacklist` and future connections skip straight to the fallback chain.
+
+### `proxy/config.py`
+
+Holds the `ProxyConfig` dataclass and related helpers.
+
+- **`ProxyConfig`** — global configuration object (see [ProxyConfig Dataclass](#proxyconfigdataclass) below).
+- **`proxy_config`** — module-level singleton instance used everywhere in the engine.
+- **`parse_dc_ip_list(dc_ip_list)`** — converts `["2:149.154.167.220"]`-style strings into a `{dc: ip}` dict.
+- **`coerce_domain_list(value)`** — normalises a domain list from a `str`, `list`, or comma/semicolon-separated string, deduplicating entries case-insensitively.
+- **`refresh_cfproxy_domains()`** — fetches the latest CF proxy domain list from GitHub; falls back to the built-in default pool if the response is empty or contains fewer than three valid domains.
+- **`start_cfproxy_domain_refresh()`** — seeds the balancer with default domains and starts a background daemon thread that re-fetches the list every hour.
+
+### `proxy/bridge.py`
+
+Bidirectional data relay with AES-CTR re-encryption.
+
+- **`CryptoCtx`** — lightweight `__slots__` container for four `cryptography` cipher objects: `clt_dec`, `clt_enc`, `tg_enc`, `tg_dec`.
+- **`MsgSplitter`** — decrypts the client stream in-place and splits it into individual MTProto transport packets so each can be dispatched as a separate WebSocket binary frame. Uses an offset-based walk to avoid O(N²) front-deletion on `bytearray`. Supports Abridged, Intermediate, and Padded Intermediate framing. Disables itself (passes chunks through verbatim) when it encounters an unrecognised packet length.
+- **`bridge_ws_reencrypt(reader, writer, ws, label, ctx, dc, is_media, splitter)`** — the hot path. Runs two concurrent asyncio tasks (`tcp_to_ws` and `ws_to_tcp`). Each task decrypts with the inbound key and re-encrypts with the outbound key before forwarding. Byte and packet counts are accumulated and logged on session close.
+- **`do_fallback(...)`** — orchestrates the three-tier fallback chain: CF Worker → CF proxy domains → direct TCP. Tries methods in order and returns `True` on the first success.
+
+### `proxy/pool.py`
+
+Pre-warmed idle connection pools keyed by DC.
+
+- **`_WsPool`** — maintains a `deque` per `(dc, is_media)` key. Connections older than **120 seconds** (`WS_POOL_MAX_AGE`) or whose transport is closing are discarded silently. On a miss (or after a hit) it schedules a background `_refill` task that opens up to `pool_size` new connections concurrently. `warmup()` pre-fills every configured DC at startup.
+- **`_CfWorkerPool`** — same design but keyed by `(dc, worker_domain)`. Each pre-warmed connection uses the `/apiws?dst=<ip>&dc=<n>` path on the configured Cloudflare Worker domain.
+- Both pools share the `WS_POOL_MAX_AGE = 120.0` constant and `pool_size` from `proxy_config`.
+
+Module-level singletons: `ws_pool`, `cf_worker_pool`.
+
+### `proxy/balancer.py`
+
+Round-robin domain assignment for CF proxy fallback.
+
+- **`_Balancer`** — holds the current domain list and a per-DC sticky assignment (`_dc_to_domain`). DC IDs covered: **1, 2, 3, 4, 5, 203**.
+- **`update_domains_list(domains_list)`** — replaces the pool and randomly re-assigns one domain per DC. No-ops if the new list is identical to the current one (compared as multisets via `Counter`).
+- **`update_domain_for_dc(dc_id, domain)`** — records the domain that successfully connected for a given DC, enabling sticky routing.
+- **`get_domains_for_dc(dc_id)`** — yields the current sticky domain first, then the rest of the pool in random order, for use in the retry loop.
+
+Module-level singleton: `balancer`.
+
+### `proxy/raw_websocket.py`
+
+A dependency-free WebSocket client implementation (RFC 6455) over TLS — no third-party WebSocket library is used.
+
+- **`RawWebSocket.connect(host, domain, timeout, path)`** — opens a TLS connection to `host:443` with SNI set to `domain`, sends an HTTP/1.1 upgrade request, parses the response, and returns a `RawWebSocket` on HTTP 101. Raises `WsHandshakeError` for any non-101 status.
+- **`send(data)` / `send_batch(parts)`** — builds masked binary frames and writes them to the transport. `send_batch` buffers all frames before a single `drain()` call.
+- **`recv()`** — reads frames in a loop, responds to PING with PONG, handles CLOSE with an echo close frame, and returns the payload of the first data frame.
+- **`WsHandshakeError`** — carries `status_code`, `status_line`, `headers`, and `location`. The `is_redirect` property is `True` for 3xx codes.
+- **`set_sock_opts(transport, buffer_size)`** — sets `TCP_NODELAY` and `SO_RCVBUF`/`SO_SNDBUF` on the underlying socket.
+
+### `proxy/fake_tls.py`
+
+Fake TLS 1.3 masking layer (the `ee`-secret mode).
+
+- **`verify_client_hello(data, secret)`** — validates an incoming TLS ClientHello by checking an HMAC-SHA256 digest embedded in the last 28 bytes of `client_random`, then verifying that the remaining 4 bytes XOR to a Unix timestamp within ±120 seconds. Returns `(client_random, session_id, timestamp)` on success, `None` on failure.
+- **`build_server_hello(secret, client_random, session_id)`** — constructs a synthetic TLS 1.3 ServerHello + ChangeCipherSpec + fake ApplicationData record. The ServerHello `random` field is set to `HMAC-SHA256(secret, client_random + response_so_far)` to authenticate the server to the client.
+- **`FakeTlsStream`** — wraps `asyncio.StreamReader`/`StreamWriter` behind a TLS record framing interface. Strips incoming TLS record headers (skipping CCS frames) and re-frames outgoing data into TLS ApplicationData records of up to 16 384 bytes.
+- **`proxy_to_masking_domain(reader, writer, initial_data, domain, label)`** — when ClientHello verification fails, this coroutine transparently proxies the raw bytes to `domain:443`, making the proxy endpoint indistinguishable from a real TLS server.
+
+### `proxy/stats.py`
+
+A lightweight in-process counters singleton.
+
+- **`_Stats`** — plain Python object with integer counters (no locks; mutations happen only from the asyncio event loop thread).
+- **`stats.summary()`** — returns a single-line log string (see [Stats Counters](#stats-counters)).
+
+Module-level singleton: `stats`.
+
+### `proxy/_aes.py`
+
+Thin wrapper around the `cryptography` library's AES-CTR mode. Provides `Cipher`, `algorithms`, and `modes` for import by `bridge.py` and `tg_ws_proxy.py`.
+
+---
+
+## Public API
+
+The following names are exported from the top-level `proxy` package (`proxy/__init__.py`):
+
+```python
+from proxy import (
+    __version__,       # str  — "1.7.1"
+    proxy_config,      # ProxyConfig — global configuration singleton
+    parse_dc_ip_list,  # function
+    coerce_domain_list,# function
+    get_link_host,     # function
+    run_proxy,         # function
+)
+```
+
+### `__version__`
+
+```python
+__version__: str = "1.7.1"
+```
+
+Current package version string.
+
+### `proxy_config`
+
+```python
+proxy_config: ProxyConfig
+```
+
+The global `ProxyConfig` instance shared by all modules. Mutate its fields before calling `run_proxy()`.
+
+### `parse_dc_ip_list`
+
+```python
+def parse_dc_ip_list(dc_ip_list: List[str]) -> Dict[int, str]
+```
+
+Parses a list of `"DC:IP"` strings and returns a `{dc_number: ip_address}` mapping. Raises `ValueError` for malformed entries or invalid IP addresses.
+
+```python
+parse_dc_ip_list(["2:149.154.167.220", "4:149.154.167.220"])
+# → {2: "149.154.167.220", 4: "149.154.167.220"}
+```
+
+### `coerce_domain_list`
+
+```python
+def coerce_domain_list(value) -> List[str]
+```
+
+Normalises a domain list from several input forms:
+- A plain `str` — split on spaces, commas, and semicolons.
+- A `list` or `tuple` of strings — each element is split the same way.
+- Any other type — returns `[]`.
+
+Duplicate entries (compared case-insensitively) are removed while preserving order.
+
+### `get_link_host`
+
+```python
+def get_link_host(host: str) -> str
+```
+
+Returns a linkable host string from the configured bind address. When `host` is `"0.0.0.0"` or `"::"` it returns `"127.0.0.1"` so that the generated `tg://proxy` link points to localhost.
+
+### `run_proxy`
+
+```python
+def run_proxy(stop_event: Optional[asyncio.Event] = None) -> None
+```
+
+Programmatic entry point. Calls `asyncio.run(_run(stop_event))`. Pass an `asyncio.Event` to stop the server gracefully from another thread (GUI apps set this event on window close).
+
+---
+
+## ProxyConfig Dataclass
+
+```python
+@dataclass
+class ProxyConfig:
+    port: int = 1443
+    host: str = '127.0.0.1'
+    secret: str = field(default_factory=lambda: os.urandom(16).hex())
+    dc_redirects: Dict[int, str] = field(
+        default_factory=lambda: {2: '149.154.167.220', 4: '149.154.167.220'}
+    )
+    buffer_size: int = 256 * 1024
+    pool_size: int = 4
+    fallback_cfproxy: bool = True
+    cfproxy_user_domains: List[str] = field(default_factory=list)
+    cfproxy_worker_domains: List[str] = field(default_factory=list)
+    fake_tls_domain: str = ''
+    proxy_protocol: bool = False
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `port` | `int` | `1443` | TCP port the proxy listens on. |
+| `host` | `str` | `'127.0.0.1'` | Bind address. Use `'0.0.0.0'` to expose on all interfaces. |
+| `secret` | `str` | random 16-byte hex | 32-character hex MTProto proxy secret. Auto-generated at startup if not set. |
+| `dc_redirects` | `Dict[int, str]` | `{2: …, 4: …}` | Maps DC numbers to target IP addresses. Connections to DCs not in this map go straight to the fallback chain. |
+| `buffer_size` | `int` | `262144` (256 KB) | `SO_RCVBUF` and `SO_SNDBUF` size set on every socket. |
+| `pool_size` | `int` | `4` | Target number of idle WebSocket connections kept per DC per `(dc, is_media)` key. Set to `0` to disable pooling. |
+| `fallback_cfproxy` | `bool` | `True` | Whether to attempt Cloudflare proxy domains when a direct WebSocket fails. |
+| `cfproxy_user_domains` | `List[str]` | `[]` | Custom CF proxy base domains supplied by the user. When non-empty, the auto-refresh from GitHub is skipped. |
+| `cfproxy_worker_domains` | `List[str]` | `[]` | Cloudflare Worker domains tried before the proxy-domain fallback. Each worker must accept `/apiws?dst=<ip>&dc=<n>` requests. |
+| `fake_tls_domain` | `str` | `''` | SNI domain for Fake TLS (`ee`-secret) mode. When set, the proxy expects TLS ClientHello on the listen port and masquerades invalid clients to this domain on port 443. |
+| `proxy_protocol` | `bool` | `False` | Accept a PROXY protocol v1 header before the MTProto handshake (for use behind nginx or HAProxy with `proxy_protocol on`). |
+
+---
+
+## Stats Counters
+
+`stats` is the `_Stats` singleton from `proxy/stats.py`. All counters are plain integers incremented from the asyncio event loop — no locks required.
+
+| Counter | Description |
+|---|---|
+| `connections_total` | Total accepted client connections since startup. |
+| `connections_active` | Currently open client connections. |
+| `connections_ws` | Connections successfully relayed over WebSocket. |
+| `connections_tcp_fallback` | Connections relayed over direct TCP to Telegram. |
+| `connections_cfproxy` | Connections relayed through a CF proxy or Worker domain. |
+| `connections_bad` | Connections that failed MTProto handshake validation (wrong secret or unknown protocol tag). |
+| `connections_masked` | Non-TLS connections forwarded to the Fake TLS masking domain. |
+| `ws_errors` | Failed WebSocket connect or handshake attempts. |
+| `bytes_up` | Total bytes forwarded from client → Telegram. |
+| `bytes_down` | Total bytes forwarded from Telegram → client. |
+| `pool_hits` | WebSocket pool cache hits (`_WsPool`). |
+| `pool_misses` | WebSocket pool cache misses (`_WsPool`). |
+| `cf_pool_hits` | CF Worker pool cache hits (`_CfWorkerPool`). |
+| `cf_pool_misses` | CF Worker pool cache misses (`_CfWorkerPool`). |
+
+The stats loop logs a summary every 60 seconds using `stats.summary()`. An example log line:
+
+```
+stats: total=142 active=3 ws=138 tcp_fb=1 cf=3 bad=0 masked=0 err=2 pool=120/138 cf_pool=n/a up=45.2 MB down=312.7 MB | ws_bl: none
+```
+
+---
+
+## MTProto Protocol Tags
+
+The proxy identifies the MTProto transport variant from the 4-byte protocol tag embedded in the decrypted obfuscation header. Three variants are supported:
+
+| Variant | Tag bytes | Internal constant |
+|---|---|---|
+| **Abridged** | `0xef 0xef 0xef 0xef` | `PROTO_TAG_ABRIDGED` |
+| **Intermediate** | `0xee 0xee 0xee 0xee` | `PROTO_TAG_INTERMEDIATE` |
+| **Padded Intermediate (Secure)** | `0xdd 0xdd 0xdd 0xdd` | `PROTO_TAG_SECURE` |
+
+`MsgSplitter` uses the integer form of the tag to choose the correct packet-length decoder:
+
+```python
+# Abridged: 1-byte (or 4-byte extended) little-endian length × 4
+# Intermediate / Padded Intermediate: 4-byte LE uint32 payload length
+if self._proto == PROTO_ABRIDGED_INT:
+    return self._next_abridged_len(offset, avail)
+if self._proto in (PROTO_INTERMEDIATE_INT, PROTO_PADDED_INTERMEDIATE_INT):
+    return self._next_intermediate_len(offset, avail)
+```
+
+Unknown tags cause `MsgSplitter` to pass all subsequent data through as a single raw chunk (the `_disabled` flag is set to `True`).

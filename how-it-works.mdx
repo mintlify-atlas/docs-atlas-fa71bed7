@@ -1,0 +1,147 @@
+---
+title: "How TG WS Proxy Works: WebSocket Bridge Architecture"
+sidebarTitle: "How It Works"
+description: "Learn how TG WS Proxy intercepts MTProto connections and bridges them over WebSocket to Telegram DCs, with automatic fallback chains."
+---
+
+TG WS Proxy runs entirely on your local machine and acts as a transparent bridge between Telegram Desktop and Telegram's data centres. When Telegram Desktop connects to the proxy, it performs a standard MTProto obfuscated handshake. The proxy decrypts that handshake to identify which DC and protocol the client wants, re-encrypts the stream with a fresh per-session key pair for the upstream side, and forwards all traffic over a TLS WebSocket connection to the appropriate Telegram DC. No third-party server is involved — the only hops are your machine, a WebSocket upgrade at the DC's web endpoint, and the DC itself.
+
+```
+Telegram Desktop → MTProto Proxy (127.0.0.1:1443) → WebSocket (TLS) → Telegram DC
+```
+
+## MTProto Handshake & DC Detection
+
+When a client connects, the proxy reads a 64-byte obfuscation init packet. The first 8 bytes are skipped (they carry reserved / version data); bytes 8–39 are the pre-key and bytes 40–55 are the IV used to derive the AES-256-CTR session key:
+
+```python
+dec_key = hashlib.sha256(dec_prekey + secret).digest()
+```
+
+After decrypting the packet the proxy reads:
+
+| Offset | Field | Values |
+|--------|-------|--------|
+| 56–59 | Protocol tag | `0xEFEFEFEF` (Abridged), `0xEEEEEEEE` (Intermediate), `0xDDDDDDDD` (Padded-Intermediate) |
+| 60–61 | DC index (signed little-endian) | Positive = regular DC, negative = media DC |
+
+The absolute value of the DC index gives the target DC number (1–5, 203). A negative value signals a media DC, which the proxy tracks separately for connection pooling.
+
+<Note>
+If the decrypted protocol tag does not match one of the three known values, the handshake is rejected immediately and the connection is closed — this protects the proxy against port-scanning.
+</Note>
+
+## Re-Encryption: Dual AES-CTR Key Pairs
+
+The proxy maintains two independent AES-256-CTR cipher pairs so it can translate between the client's key material and a freshly generated relay key material, without ever exposing either side's keys to the other.
+
+**Client side** — derived from the init packet and the configured proxy secret:
+- `clt_dec_key = SHA256(prekey + secret)` — decrypts data arriving from Telegram Desktop
+- `clt_enc_key = SHA256(reversed(prekey_iv) + secret)` — encrypts data sent back to Telegram Desktop
+
+**Relay side** — generated fresh per-connection from random bytes:
+- `relay_enc_key` / `relay_enc_iv` — encrypts data forwarded to Telegram
+- `relay_dec_key` / `relay_dec_iv` — decrypts data received from Telegram
+
+This is implemented as `CryptoCtx` in `bridge.py`:
+
+```python
+class CryptoCtx:
+    __slots__ = ('clt_dec', 'clt_enc', 'tg_enc', 'tg_dec')
+```
+
+The bidirectional bridge loop applies the transforms in both directions concurrently:
+
+```
+client ciphertext → clt_dec → plaintext → tg_enc → WebSocket frame → Telegram
+Telegram frame    → tg_dec  → plaintext → clt_enc → TCP bytes     → client
+```
+
+Each AES-CTR context is advanced past the first 64 bytes (the init block) before data transfer begins, matching Telegram's obfuscation protocol exactly.
+
+## WebSocket Connection to Telegram
+
+For each session the proxy connects to Telegram using a raw TLS WebSocket upgrade. The target URL follows Telegram's own WebSocket domain convention:
+
+```
+wss://kws{dc}.web.telegram.org/apiws
+```
+
+For media DCs and as a secondary domain, `kws{dc}-1.web.telegram.org` is also tried. The TCP connection is made directly to the DC's IP address (configured via `--dc-ip`), but the TLS SNI and the `Host` header carry the `kws{dc}.web.telegram.org` domain name. Once the WebSocket handshake is complete the proxy sends the 64-byte relay init packet and starts the bidirectional bridge.
+
+<Tip>
+The WS upgrade path is always `/apiws`. Telegram's WebSocket endpoints require this specific path and reject anything else.
+</Tip>
+
+## Fallback Chain
+
+If the primary WebSocket connection fails (e.g. port 443 is blocked, or Telegram responds with a redirect), the proxy automatically works through a prioritised fallback chain rather than dropping the connection.
+
+<Steps>
+  <Step title="Primary: WebSocket via Telegram WS Domains">
+    The proxy attempts a TLS WebSocket connection to `kws{dc}.web.telegram.org/apiws` (and `kws{dc}-1.web.telegram.org/apiws`) using the configured DC IP address. This is the lowest-latency path and is used for the vast majority of connections.
+  </Step>
+  <Step title="CF Worker Fallback (if configured)">
+    If `--cfproxy-worker-domain` is set, the proxy next tries a Cloudflare Worker. The Worker receives the target DC IP and DC number as query parameters (`/apiws?dst={ip}&dc={n}`) and proxies the WebSocket connection on your behalf. This path is tried before the generic CF proxy fallback.
+  </Step>
+  <Step title="CF Proxy Fallback (Cloudflare-proxied domains)">
+    The proxy tries `kws{dc}.{base_domain}/apiws` where `{base_domain}` is one of the Cloudflare-proxied domains managed by the balancer. These domains resolve through Cloudflare's network, masking the final destination. The balancer rotates through the domain list (see [Cloudflare Proxy](#cloudflare-proxy) below).
+  </Step>
+  <Step title="Direct TCP Fallback to Port 443">
+    As a last resort the proxy opens a plain TCP connection directly to the DC's default IP on port 443 and sends the relay init packet over it. No WebSocket framing is used on this path — the stream is raw obfuscated MTProto over TCP.
+  </Step>
+</Steps>
+
+<Note>
+If a DC returns HTTP 302 redirects for every WebSocket domain tried, that DC is added to the WS blacklist and subsequent connections from that session skip straight to the fallback chain, avoiding the 2-second timeout penalty on each attempt.
+</Note>
+
+## Connection Pool
+
+Opening a new TLS+WebSocket connection on every Telegram Desktop request adds noticeable latency. TG WS Proxy maintains a warm idle pool of pre-established WebSocket connections so that most sessions can start transferring data immediately.
+
+- **Pool key**: `(dc_id, is_media)` — separate pools for regular and media DCs.
+- **Pool size**: controlled by `--pool-size` (default `4` connections per key).
+- **Max age**: connections older than **120 seconds** (`WS_POOL_MAX_AGE`) are discarded when retrieved, regardless of their health state.
+- **Warmup**: on startup, `ws_pool.warmup()` schedules a refill for every configured DC (both regular and media variants) so the pool is ready before the first client connects.
+- **Refill on use**: whenever a connection is taken from the pool a background task immediately begins refilling the bucket back to `pool_size`, keeping the pool topped up.
+
+```python
+class _WsPool:
+    WS_POOL_MAX_AGE = 120.0   # seconds
+```
+
+A separate `_CfWorkerPool` applies the same mechanics to pre-established connections to configured Cloudflare Worker domains.
+
+## Cloudflare Proxy
+
+When WebSocket access to Telegram is blocked, the proxy can route traffic through Cloudflare-proxied domains. Each base domain is combined with a `kws{n}` subdomain to match Telegram's DC numbering:
+
+| Subdomain | DC |
+|-----------|----|
+| `kws1.{domain}` | DC 1 |
+| `kws2.{domain}` | DC 2 |
+| `kws3.{domain}` | DC 3 |
+| `kws4.{domain}` | DC 4 |
+| `kws5.{domain}` | DC 5 |
+| `kws203.{domain}` | DC 203 |
+
+The `_Balancer` class in `balancer.py` maintains one preferred domain per DC. On startup a random domain is assigned to each DC from the pool. When a connection through the current preferred domain succeeds or fails, `update_domain_for_dc()` updates the mapping. `get_domains_for_dc()` always yields the current preferred domain first, then the rest of the pool in random order, so the balancer naturally converges to healthy domains over time.
+
+By default the domain pool is fetched from the project's GitHub repository and refreshed every hour. You can override this with `--cfproxy-domain` to supply your own Cloudflare-proxied domains.
+
+## Fake TLS (ee-secret)
+
+When `--fake-tls-domain` is set, the proxy switches to an `ee`-type MTProto secret that embeds an SNI domain name. This makes the connection look like ordinary TLS traffic to a known domain, helping it traverse deep-packet-inspection firewalls.
+
+The handshake flow with Fake TLS enabled:
+
+1. **Client sends TLS ClientHello** — The first byte on the wire is `0x16` (TLS record type Handshake). The proxy reads the full ClientHello record.
+2. **Proxy validates the ClientHello** — It computes `HMAC-SHA256(secret, zeroed_hello)` and checks that the first 28 bytes of the result match the client random. It also extracts a timestamp from the remaining 4 bytes and rejects messages outside a ±120-second window, providing replay protection.
+3. **Proxy sends synthetic ServerHello** — A valid-looking `ServerHello` + `ChangeCipherSpec` + fake `ApplicationData` record is constructed, with the server random set to `HMAC-SHA256(secret, client_random + response)`. This makes the exchange indistinguishable from real TLS 1.3 to passive observers.
+4. **Inner obfuscated stream** — After the fake handshake both sides wrap their data in TLS `ApplicationData` records (`0x17 0x03 0x03`). The proxy unwraps these records and processes the inner MTProto obfuscation stream normally.
+5. **Non-TLS clients are redirected** — If the first byte is not `0x16`, the proxy returns an HTTP 301 redirect to the masking domain, so a browser hitting the proxy port sees only an innocuous redirect.
+
+<Note>
+The SNI domain configured via `--fake-tls-domain` appears only in the TLS handshake for masking purposes. The actual upstream WebSocket connection still goes to Telegram's own WebSocket domains.
+</Note>

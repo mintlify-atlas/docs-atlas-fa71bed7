@@ -1,0 +1,101 @@
+---
+title: "Deploy TG WS Proxy with Docker"
+sidebarTitle: "Docker"
+description: "Run TG WS Proxy in a Docker container for server-side deployment, configuring host, port, secret, and DC IPs via environment variables."
+---
+
+Running TG WS Proxy inside Docker is the recommended approach for server-side or headless deployments. The container exposes the proxy on port `1443`, restarts automatically on failure, and is fully configured through environment variables — no config files to manage.
+
+## Setup
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/Flowseal/tg-ws-proxy.git
+    cd tg-ws-proxy
+    ```
+  </Step>
+  <Step title="Build the Docker image">
+    ```bash
+    docker build -t tg-ws-proxy .
+    ```
+  </Step>
+  <Step title="Run the container">
+    ```bash
+    docker run -d \
+      --name tg-ws-proxy \
+      --restart=always \
+      -p 1443:1443 \
+      tg-ws-proxy:latest
+    ```
+
+    The `-d` flag runs the container in detached mode. `--restart=always` ensures it comes back up automatically after a reboot or crash.
+  </Step>
+  <Step title="Retrieve the connection link">
+    ```bash
+    docker logs tg-ws-proxy 2>&1 | grep 'tg://proxy'
+    ```
+
+    You will see a line similar to:
+
+    ```text
+    tg://proxy?server=172.17.0.2&port=1443&secret=dd68f127db1d...
+    ```
+
+    Use this link to configure Telegram Desktop, or share it with users who should connect through this proxy.
+  </Step>
+</Steps>
+
+## Environment Variables
+
+All proxy settings are passed as environment variables at container start time:
+
+| Variable | Default | Description |
+|---|---|---|
+| `TG_WS_PROXY_HOST` | `0.0.0.0` | Interface address the proxy listens on inside the container |
+| `TG_WS_PROXY_PORT` | `1443` | Port the proxy listens on inside the container |
+| `TG_WS_PROXY_SECRET` | *(random)* | 32-character hex secret used to authenticate clients; auto-generated if left empty |
+| `TG_WS_PROXY_DC_IPS` | `2:149.154.167.220 4:149.154.167.220` | Space-separated list of `DC:IP` pairs the proxy will forward traffic to |
+
+## Custom Secret
+
+It is good practice to set a fixed secret so the connection link stays stable across container restarts. Generate one with:
+
+```bash
+openssl rand -hex 16
+```
+
+Then pass it to the container:
+
+```bash
+docker run -d \
+  --name tg-ws-proxy \
+  --restart=always \
+  -p 1443:1443 \
+  -e TG_WS_PROXY_SECRET="your_secret_here" \
+  tg-ws-proxy:latest
+```
+
+## Connect Telegram Desktop
+
+Because the proxy is running on a remote host (or on a separate Docker network), the **Server** address in Telegram Desktop must be the IP or hostname of the Docker host — not `127.0.0.1`.
+
+<Steps>
+  <Step title="Open Telegram proxy settings">
+    In Telegram Desktop go to **Settings → Advanced → Connection type**, then select **Use custom proxy**.
+  </Step>
+  <Step title="Add a new proxy">
+    Click **Add proxy** and fill in the fields:
+    - **Type:** MTProto
+    - **Server:** your Docker host's public IP or hostname (e.g. `203.0.113.10`)
+    - **Port:** `1443` (or the host-side port from `-p`)
+    - **Secret:** the value of `TG_WS_PROXY_SECRET` from the logs
+  </Step>
+  <Step title="Save and connect">
+    Click **Save**, select the new proxy entry, and click **Enable**.
+  </Step>
+</Steps>
+
+<Note>
+  The Dockerfile uses `python:3.12-slim` as the runtime base image and installs [tini](https://github.com/krallin/tini) as the container init process. Tini ensures that the proxy receives Unix signals correctly (e.g. `SIGTERM` on `docker stop`) and that zombie processes are properly reaped, making the container behave predictably in orchestrated environments.
+</Note>

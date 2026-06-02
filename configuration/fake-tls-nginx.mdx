@@ -1,0 +1,87 @@
+---
+title: "Fake TLS Masking with Nginx for TG WS Proxy"
+sidebarTitle: "Fake TLS + Nginx"
+description: "Configure TG WS Proxy with Fake TLS (ee-secret) and nginx stream-module SNI routing to mask proxy traffic as regular HTTPS on port 443."
+---
+
+Fake TLS is a masking layer that makes TG WS Proxy traffic indistinguishable from a standard TLS handshake to a legitimate HTTPS domain. Instead of exposing a recognisable MTProto pattern on a non-standard port, the proxy listens on port 443 behind nginx and processes a real TLS ClientHello — responding with a synthetic ServerHello — before the inner obfuscated MTProto stream begins. To a passive observer or a DPI device, the connection looks like ordinary HTTPS. The connection link uses the `ee` secret prefix to signal Fake TLS mode to Telegram Desktop.
+
+## How Fake TLS works
+
+1. The client (Telegram Desktop) sends a standard TLS ClientHello containing the configured SNI domain name.
+2. TG WS Proxy verifies the ClientHello against the shared secret and, if valid, replies with a synthetic ServerHello.
+3. The inner stream carries obfuscated MTProto data wrapped in TLS records — there is no real TLS certificate involved.
+4. If the ClientHello does not match the secret (e.g., a scanner or a browser), the proxy transparently forwards the connection to the real domain, so the server appears to serve legitimate HTTPS content.
+
+## Requirements
+
+- A domain name whose DNS A record resolves to the public IP of the server running the proxy.
+- nginx installed with the **stream** module (`--with-stream` and `--with-stream_ssl_preread_module`). Most distribution packages include both.
+
+## Connection link format
+
+With Fake TLS enabled, the proxy generates an `ee`-prefixed secret link:
+
+```
+tg://proxy?server=your.domain.com&port=443&secret=ee<32-hex-secret><domain-in-hex>
+```
+
+The domain portion is encoded as ASCII hex. TG WS Proxy prints the full ready-to-use link to the log at startup — you do not need to construct it manually.
+
+## Nginx configuration
+
+The following nginx `stream` block uses SNI pre-reading to route port 443 traffic to TG WS Proxy based on the requested domain name. All other SNI values (or no SNI) can be routed to other upstreams, making it easy to run the proxy alongside an existing web server on the same machine.
+
+Place this configuration in your nginx `stream` context (typically a separate file included from `nginx.conf` or from `/etc/nginx/stream.conf.d/`):
+
+```nginx
+upstream mtproto {
+    server 127.0.0.1:8446;
+}
+
+map $ssl_preread_server_name $sni_name {
+    hostnames;
+    example.com mtproto;
+}
+
+server {
+    proxy_protocol on;
+    set_real_ip_from unix:;
+    listen          443;
+    proxy_pass      $sni_name;
+    ssl_preread     on;
+}
+```
+
+Replace `example.com` with your actual domain. The `map` block can be extended with additional entries to route other SNI names to other upstreams (for example, an Xray or a regular web server) without changing the `server` block.
+
+## Start TG WS Proxy behind nginx
+
+With nginx handling port 443 and forwarding matching SNI traffic to `127.0.0.1:8446`, start TG WS Proxy on that internal port:
+
+```bash
+tg-ws-proxy \
+  --port 8446 \
+  --host 127.0.0.1 \
+  --fake-tls-domain example.com \
+  --proxy-protocol \
+  --secret <32-hex-chars>
+```
+
+The proxy will log a `tg://proxy` link with the `ee`-prefixed secret. Open the link in Telegram Desktop (or paste it manually into **Settings → Advanced → Connection type → Use custom proxy**) to connect.
+
+<Note>
+  The `--proxy-protocol` flag is **required** when nginx is configured with `proxy_protocol on`. Without it, TG WS Proxy receives the PROXY protocol header as raw data and cannot extract the real client IP, causing handshake failures. Always pair `proxy_protocol on` in nginx with `--proxy-protocol` in the proxy command.
+</Note>
+
+<Note>
+  The domain passed to `--fake-tls-domain` must point (via DNS A record) to the **same server** where TG WS Proxy is running. When an unrecognised client connects, the proxy forwards the connection to that domain to retrieve a legitimate TLS response, so it must be reachable and serving real HTTPS.
+</Note>
+
+<Tip>
+  Generate a secure 32-character hex secret with:
+  ```bash
+  openssl rand -hex 16
+  ```
+  Pass the output directly to `--secret`. The same value can be stored in `config.json` under the `"secret"` key if you later switch to the tray app.
+</Tip>

@@ -1,0 +1,143 @@
+---
+title: "Contributing to TG WS Proxy"
+sidebarTitle: "Contributing"
+description: "Learn how to contribute to TG WS Proxy: running from source, submitting bug reports, writing pull requests, and understanding the project structure."
+---
+
+TG WS Proxy welcomes contributions of all kinds — bug reports, documentation improvements, and code patches. This page explains how to get a local development environment running, what to include in a useful bug report, and the expectations for pull requests. Reading through this guide before opening an issue or PR will help get your contribution reviewed and merged faster.
+
+## Before Opening an Issue
+
+Before filing a new issue, take a moment to:
+
+1. **Check the documentation first.** Many common questions are already answered in the troubleshooting guide and configuration pages. The `docs/` directory in the repository is also a good reference.
+2. **Search for an existing issue.** Use the GitHub issue search to check whether the same problem or feature request has already been reported. Adding a comment to an existing thread is more useful than opening a duplicate.
+3. **Use the standard labels.** When filing, use the labels defined in `.github/labels.md` so that triage and prioritisation can happen without extra back-and-forth.
+
+---
+
+## Reporting Bugs
+
+A good bug report lets a maintainer reproduce the problem without having to ask follow-up questions.
+
+<Steps>
+
+<Step title="Use the Bug Report template">
+On the [new issue page](https://github.com/Flowseal/tg-ws-proxy/issues/new/choose), select the **Bug Report** template. It contains the fields described in the next step.
+</Step>
+
+<Step title="Fill in the required information">
+Provide all of the following:
+
+- **App version** — visible in **Settings** or in the log header line at startup (e.g. `tg-ws-proxy 1.7.1`).
+- **Operating system** — name, version, and architecture (e.g. Windows 11 x64, macOS 14 Apple Silicon, Ubuntu 22.04 x86_64).
+- **Steps to reproduce** — the exact sequence of actions that triggers the bug, starting from a fresh launch.
+- **Expected behaviour** — what you expected to happen.
+- **Actual behaviour** — what actually happened, including any visible error messages.
+- **Log file or error text** — copy the relevant section from your log file (see [Troubleshooting](/reference/troubleshooting) for log file locations). Redact your proxy secret before pasting.
+</Step>
+
+</Steps>
+
+---
+
+## Local Development
+
+**Requirements:** Python ≥ 3.8
+
+<Steps>
+
+<Step title="Clone the repository">
+```bash
+git clone https://github.com/Flowseal/tg-ws-proxy.git
+cd tg-ws-proxy
+```
+</Step>
+
+<Step title="Install in editable mode">
+```bash
+pip install -e .
+```
+
+This installs the package and all its dependencies, and registers the entry-point scripts so that changes to source files are reflected immediately without reinstalling.
+</Step>
+
+<Step title="Run the proxy">
+Choose the entry point that matches your platform:
+
+| Mode | Command |
+|---|---|
+| Console (all platforms) | `tg-ws-proxy` |
+| Windows tray | `tg-ws-proxy-tray-win` |
+| macOS menu-bar | `tg-ws-proxy-tray-macos` |
+| Linux tray | `tg-ws-proxy-tray-linux` |
+
+Pass `--help` to the console entry point for a full list of CLI options, or `-v` to enable verbose debug logging.
+
+```bash
+tg-ws-proxy --port 1443 --dc-ip 2:149.154.167.220 --dc-ip 4:149.154.167.220 -v
+```
+</Step>
+
+</Steps>
+
+---
+
+## Project Structure
+
+```
+proxy/           Core proxy engine — asyncio server, MTProto handshake,
+                 AES-CTR re-encryption, raw WebSocket client, WS pool,
+                 CF balancer, Fake TLS, and stats.
+
+ui/              CustomTkinter GUI components used by the Windows and
+                 Linux tray applications (settings dialog, log viewer, etc.).
+
+utils/           Shared utilities: configuration persistence, rotating log
+                 setup, GitHub update check, and common tray helpers.
+
+packaging/       PyInstaller .spec files for building Windows, macOS, and
+                 Linux standalone binaries.
+
+docs/            Documentation source files (Markdown).
+
+windows.py       Windows tray application entry point.
+macos.py         macOS menu-bar application entry point.
+linux.py         Linux tray application entry point.
+
+Dockerfile       Container build for headless / server deployment.
+pyproject.toml   Package metadata, dependencies, and entry-point declarations.
+```
+
+<Tip>
+The `proxy/` package is self-contained and has no dependency on `ui/` or `utils/`. You can import and call `run_proxy()` directly from your own Python code without any GUI components.
+</Tip>
+
+---
+
+## Pull Request Guidelines
+
+Before opening a pull request, please make sure that:
+
+1. **The change solves a concrete problem.** Speculative refactors or style-only changes without an associated issue are unlikely to be merged. Link the relevant issue in the PR description.
+2. **Existing scenarios are not broken.** Test the primary connection path (direct WebSocket), the fallback chain (CF proxy, direct TCP), and — if you touched the Fake TLS layer — the masking-domain passthrough. If the project gains automated tests in the future, run them before pushing.
+3. **Documentation is updated if behaviour changes.** If you modify a configuration field, add a CLI flag, or change how a feature works, update the relevant documentation page alongside the code.
+4. **PRs are small and focused.** A pull request that does one thing is reviewed and merged much faster than one that combines multiple unrelated changes. If you have several improvements in mind, open a separate PR for each.
+
+---
+
+## Support the Project
+
+TG WS Proxy is developed and maintained in spare time. If the project saves you time or improves your Telegram experience, consider a donation — it helps keep the domain list maintained and new features coming.
+
+Donations are accepted via [NowPayments](https://nowpayments.io/donation/flowseal), which supports a wide range of cryptocurrencies including:
+
+- **USDT (TRC20):** `TXPnKs2Ww1RD8JN6nChFUVmi5r2hqrWjuu`
+- **BTC:** `bc1qr8vd6jelkyyry3m4mq6z5txdx4pl856fu6ss0w`
+- **ETH:** `0x1417878fdc5047E670a77748B34819b9A49C72F1`
+
+Any amount is appreciated. Thank you for using and improving TG WS Proxy. ❤️
+
+---
+
+[Open an issue or PR on GitHub →](https://github.com/Flowseal/tg-ws-proxy/issues)

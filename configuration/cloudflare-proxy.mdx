@@ -1,0 +1,102 @@
+---
+title: "Configure Cloudflare Proxy Domains for TG WS Proxy"
+sidebarTitle: "Cloudflare Proxy"
+description: "Set up a custom Cloudflare-proxied domain with DNS A-records pointing to Telegram DCs to use as a WebSocket fallback in TG WS Proxy."
+---
+
+When a direct WebSocket connection to a Telegram data-center is unavailable — for example, because the DC IP is blocked by your ISP or by a national firewall — TG WS Proxy automatically falls back to routing traffic through Cloudflare. This works by connecting to subdomains of a Cloudflare-proxied domain whose DNS A-records point to the Telegram DC IPs; Cloudflare then proxies the WebSocket traffic on to the destination. No dedicated server is required — only a domain.
+
+TG WS Proxy ships with a built-in pool of default CF proxy domains, but you are strongly encouraged to set up your own.
+
+<Note>
+  Cloudflare enforces per-domain limits on concurrent WebSocket connections. The default built-in domains are shared across all TG WS Proxy users, so they can hit those limits and stop working at any time. Using your own domain gives you a dedicated quota and full control.
+</Note>
+
+## How CF proxy works
+
+The proxy constructs WebSocket URLs using the following subdomain pattern against your domain:
+
+| Subdomain | Telegram DC IP |
+|-----------|---------------|
+| `kws1.<yourdomain>` | `149.154.175.50` (DC 1) |
+| `kws2.<yourdomain>` | `149.154.167.51` (DC 2) |
+| `kws3.<yourdomain>` | `149.154.175.100` (DC 3) |
+| `kws4.<yourdomain>` | `149.154.167.91` (DC 4) |
+| `kws5.<yourdomain>` | `149.154.171.5` (DC 5) |
+| `kws203.<yourdomain>` | `91.105.192.100` (DC 203 / media) |
+
+Cloudflare acts as a transparent WebSocket proxy, accepting the connection on its edge and forwarding it to the DC IP defined in the DNS record. The client only ever connects to Cloudflare's IP space, not to Telegram directly.
+
+## Prerequisites
+
+- A domain name added to Cloudflare. You can purchase one directly from Cloudflare (Registrar) or transfer an existing domain by updating the nameservers at your current registrar. Any top-level domain works; `.com` domains typically cost around $10–15 per year.
+
+## Setup
+
+<Steps>
+
+<Step title="Add your domain to Cloudflare">
+  Log in to [dash.cloudflare.com](https://dash.cloudflare.com), click **Add a site**, enter your domain, and follow the prompts to change your nameservers to Cloudflare's. Refer to the [Cloudflare full setup guide](https://developers.cloudflare.com/dns/zone-setups/full-setup/setup/) if needed.
+</Step>
+
+<Step title="Set SSL/TLS mode to Flexible">
+  In the Cloudflare dashboard, navigate to your domain → **SSL/TLS** → **Overview** and select **Flexible** as the encryption mode. This allows Cloudflare to terminate TLS on its edge and forward plain connections to the DC IPs.
+</Step>
+
+<Step title="Add DNS A records">
+  Go to **DNS** → **Records** and click **+ Add record** for each of the following entries. Make sure the **Proxy status** toggle is **orange (proxied)** for every record.
+
+  | Type | Name | IPv4 address |
+  |------|------|-------------|
+  | A | `kws1` | `149.154.175.50` |
+  | A | `kws2` | `149.154.167.51` |
+  | A | `kws3` | `149.154.175.100` |
+  | A | `kws4` | `149.154.167.91` |
+  | A | `kws5` | `149.154.171.5` |
+  | A | `kws203` | `91.105.192.100` |
+</Step>
+
+<Step title="Configure your domain in TG WS Proxy">
+  Enter your domain in the TG WS Proxy settings using one of the methods below, then restart the proxy.
+</Step>
+
+</Steps>
+
+## Configure in TG WS Proxy
+
+Choose the method that matches how you run TG WS Proxy:
+
+**Tray app — Settings dialog:**
+Open the tray icon menu → **Settings**, find the **CF proxy domain** field, and enter your domain (e.g., `yourdomain.com`). Click **Restart** to apply.
+
+**CLI flag:**
+```bash
+tg-ws-proxy --cfproxy-domain yourdomain.com
+```
+
+Pass the flag multiple times to supply several domains:
+```bash
+tg-ws-proxy --cfproxy-domain yourdomain.com --cfproxy-domain otherdomain.com
+```
+
+**`config.json`:**
+```json
+{
+  "cfproxy_user_domain": "yourdomain.com"
+}
+```
+
+Or as an array for multiple domains:
+```json
+{
+  "cfproxy_user_domain": ["yourdomain.com", "otherdomain.com"]
+}
+```
+
+<Warning>
+  Cloudflare operates out of a well-known range of IP addresses. In some regions (for example, Russia) Cloudflare's IP space may itself be blocked. If that is the case, add your domain and its Cloudflare IP to your traffic bypass or unblock software (such as [zapret](https://github.com/Flowseal/zapret-discord-youtube/)) so that connections to `*.yourdomain.com` bypass the restriction.
+</Warning>
+
+<Tip>
+  If non-Premium accounts can load reactions and stickers but **photos and videos still fail to load**, try setting `dc_ip` to only `4:149.154.167.220` (removing all other DC entries). DC 4 handles media for most accounts, and limiting the mapping to that DC forces all media traffic through the CF proxy path.
+</Tip>

@@ -1,0 +1,185 @@
+---
+title: "Configure a Cloudflare Worker for TG WS Proxy Fallback"
+sidebarTitle: "Cloudflare Worker"
+description: "Create a free Cloudflare Worker to use as a WebSocket fallback for TG WS Proxy — no domain purchase required, just a free Cloudflare account."
+---
+
+A Cloudflare Worker is a fully free alternative to the [Cloudflare Proxy domain](/configuration/cloudflare-proxy) fallback method. It requires no domain purchase — Cloudflare automatically provides a `*.workers.dev` subdomain for every Worker you deploy. When configured, TG WS Proxy tries the Worker-based WebSocket path **before** other fallback methods, making it the preferred option for environments where direct Telegram connections are unreliable.
+
+## Prerequisites
+
+- A free Cloudflare account at [dash.cloudflare.com](https://dash.cloudflare.com). After signing up, **confirm your email address** using the verification message Cloudflare sends — Workers cannot be deployed until the account email is confirmed.
+
+<Note>
+  Before you start, add the following domains to any traffic bypass or unblock software you use (e.g., [zapret](https://github.com/Flowseal/zapret-discord-youtube/)). If these domains are blocked, the Cloudflare dashboard itself and the Worker editor will not load:
+
+  ```
+  cloudflare.com
+  cloudflare.dev
+  workers.dev
+  ```
+</Note>
+
+## Create the Worker
+
+<Steps>
+
+<Step title="Open Workers & Pages">
+  Log in to the Cloudflare dashboard. In the left-hand navigation panel, go to **Compute** → **Workers & Pages**.
+</Step>
+
+<Step title="Create a new Worker application">
+  Click the **Create application** button in the top-right corner. Select **Start with Hello World!** and click **Deploy**. Cloudflare provisions the Worker with a placeholder script and assigns it a unique `*.workers.dev` domain.
+</Step>
+
+<Step title="Open the code editor">
+  After deploying, click **Edit code** in the top-right corner of the Worker overview page.
+</Step>
+
+<Step title="Replace the Worker code">
+  Select and delete all existing code in the editor, then paste in the full Worker script from the [Worker code](#worker-code) section below. 
+
+  If the editor itself fails to load, you have not yet added the Cloudflare domains to your bypass software (see the note above).
+</Step>
+
+<Step title="Deploy the updated Worker">
+  Click the **Deploy** button in the top-right corner to publish the new code.
+</Step>
+
+<Step title="Copy your Worker domain">
+  After deploying, your Worker domain is shown in the panel on the right side of the overview page. It follows the format:
+
+  ```
+  random-name.username.workers.dev
+  ```
+
+  Copy this value — you will need it in the next step.
+</Step>
+
+<Step title="Configure TG WS Proxy">
+  Enter your Worker domain in TG WS Proxy using one of the methods in the [Configure in TG WS Proxy](#configure-in-tg-ws-proxy) section below, then restart the proxy.
+</Step>
+
+</Steps>
+
+## Worker code
+
+Paste the following JavaScript into the Cloudflare Worker editor, replacing the default Hello World script entirely.
+
+```javascript
+import { connect } from "cloudflare:sockets";
+
+function toBytes(data) {
+	if (data instanceof ArrayBuffer) {
+		return new Uint8Array(data);
+	}
+	if (typeof data === "string") {
+		return new TextEncoder().encode(data);
+	}
+	if (data && typeof data.arrayBuffer === "function") {
+		return data.arrayBuffer().then((ab) => new Uint8Array(ab));
+	}
+	return new Uint8Array();
+}
+
+export default {
+	async fetch(request) {
+		if ((request.headers.get("Upgrade") || "").toLowerCase() !== "websocket") {
+			return new Response("Expected websocket", { status: 426 });
+		}
+
+		const url = new URL(request.url);
+		if (url.pathname !== "/apiws") {
+			return new Response("Not found", { status: 404 });
+		}
+
+		const dst = url.searchParams.get("dst");
+		const pair = new WebSocketPair();
+		const client = pair[0];
+		const server = pair[1];
+		server.accept();
+
+		const socket = connect({ hostname: dst, port: 443 });
+		const tcpReader = socket.readable.getReader();
+		const tcpWriter = socket.writable.getWriter();
+
+		server.addEventListener("message", async (event) => {
+			try {
+				await tcpWriter.write(await toBytes(event.data));
+			} catch {
+				try {
+					server.close(1011, "tcp write failed");
+				} catch {}
+			}
+		});
+
+		server.addEventListener("close", async () => {
+			try {
+				await tcpWriter.close();
+			} catch {}
+			try {
+				socket.close();
+			} catch {}
+		});
+
+		(async () => {
+			try {
+				while (true) {
+					const { value, done } = await tcpReader.read();
+					if (done) break;
+					if (value) server.send(value);
+				}
+			} catch {
+			} finally {
+				try { server.close(); } catch {}
+				try { tcpReader.releaseLock(); } catch {}
+				try { socket.close(); } catch {}
+			}
+		})();
+
+		return new Response(null, { status: 101, webSocket: client });
+	},
+};
+```
+
+The Worker accepts WebSocket upgrade requests on the `/apiws` path, opens a raw TCP connection to the Telegram DC IP supplied in the `dst` query parameter, and bidirectionally relays bytes between the WebSocket client and the TCP socket.
+
+## Configure in TG WS Proxy
+
+Choose the method that matches how you run TG WS Proxy:
+
+**Tray app — Settings dialog:**
+Open the tray icon menu → **Settings**, find the **Cloudflare Worker domain** field, and enter your Worker domain (e.g., `random-name.username.workers.dev`). Click **Restart** to apply.
+
+**CLI flag:**
+```bash
+tg-ws-proxy --cfproxy-worker-domain random-name.username.workers.dev
+```
+
+Pass the flag multiple times to use several Workers in rotation:
+```bash
+tg-ws-proxy \
+  --cfproxy-worker-domain worker1.user.workers.dev \
+  --cfproxy-worker-domain worker2.user.workers.dev
+```
+
+**`config.json`:**
+```json
+{
+  "cfproxy_worker_domain": "random-name.username.workers.dev"
+}
+```
+
+Or as an array for multiple Workers:
+```json
+{
+  "cfproxy_worker_domain": [
+    "worker1.user.workers.dev",
+    "worker2.user.workers.dev"
+  ]
+}
+```
+
+<Tip>
+  If non-Premium accounts can load reactions and stickers but **photos and videos still fail to load**, try setting `dc_ip` to only `4:149.154.167.220` (removing all other DC entries). Limiting the mapping to DC 4 forces all media traffic through the Worker fallback path.
+</Tip>

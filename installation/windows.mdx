@@ -1,0 +1,88 @@
+---
+title: "Install TG WS Proxy on Windows"
+sidebarTitle: "Windows"
+description: "Download and run TG WS Proxy on Windows 10+ or Windows 7, with system tray integration and automatic Telegram Desktop configuration."
+---
+
+TG WS Proxy is a local MTProto proxy that routes Telegram Desktop traffic over WebSocket connections. On Windows, it ships as a self-contained executable that lives in the system tray, so no installation wizard or admin rights are required — just download and run.
+
+## Downloads
+
+Grab the build that matches your Windows version from the [releases page](https://github.com/Flowseal/tg-ws-proxy/releases):
+
+| File | Target |
+|---|---|
+| `TgWsProxy_windows.exe` | Windows 10 and later |
+| `TgWsProxy_windows_7_64bit.exe` | Windows 7 (64-bit) |
+| `TgWsProxy_windows_7_32bit.exe` | Windows 7 (32-bit) |
+
+All binaries are built automatically from the public source code via [GitHub Actions](https://github.com/Flowseal/tg-ws-proxy/actions).
+
+<Warning>
+  Some antivirus engines flag PyInstaller-bundled executables as suspicious. If Windows Defender or another AV quarantines the file, you can verify the binary on [VirusTotal](https://www.virustotal.com), add it to your AV exclusions, or switch to the Windows 7 build, which is compiled with an older toolchain that tends to trigger fewer heuristic warnings. The full source code is publicly available for review.
+</Warning>
+
+## First Launch
+
+When you run the executable for the first time, a window opens showing the connection details (server, port, and secret) along with instructions for setting up Telegram Desktop. After you close that window, the application minimises to the **system tray** and continues running in the background.
+
+If a newer version is available on GitHub, you may see a prompt asking whether you would like to open the release page. This check can be disabled at any time in **Settings**.
+
+## Tray Menu
+
+Right-click the tray icon to access all proxy controls:
+
+| Item | Description |
+|---|---|
+| **Open in Telegram** | Launches Telegram Desktop and automatically applies the proxy via a `tg://proxy` link |
+| **Copy Link** | Copies the `tg://proxy` connection link to the clipboard |
+| **Restart Proxy** | Restarts the proxy process without quitting the tray app |
+| **Settings…** | Opens the GUI configuration editor — manage the secret, port, autostart, and update checks |
+| **Open Logs** | Opens the log file in your default text editor |
+| **Exit** | Stops the proxy and closes the application |
+
+## Connect Telegram Desktop
+
+### Automatic
+
+Click **Open in Telegram** in the tray menu. Telegram Desktop will open a dialog asking you to confirm the proxy configuration — click **Enable** and you are done.
+
+If Telegram does not open automatically, use the fallback:
+
+<Steps>
+  <Step title="Copy the link">
+    Right-click the tray icon and choose **Copy Link**.
+  </Step>
+  <Step title="Send to Saved Messages">
+    In Telegram Desktop, open your **Saved Messages** chat and paste the link there, then send it.
+  </Step>
+  <Step title="Activate the proxy">
+    Click the link inside Saved Messages. Telegram will prompt you to enable the proxy — confirm to connect.
+  </Step>
+</Steps>
+
+### Manual
+
+<Steps>
+  <Step title="Open Telegram proxy settings">
+    In Telegram Desktop go to **Settings → Advanced → Connection type**, then select **Use custom proxy**.
+  </Step>
+  <Step title="Add a new proxy">
+    Click **Add proxy** and fill in the fields:
+    - **Type:** MTProto
+    - **Server:** `127.0.0.1`
+    - **Port:** `1443`
+    - **Secret:** copy from the first-launch window, the **Settings** dialog, or the log file
+  </Step>
+  <Step title="Save and connect">
+    Click **Save**, then select the newly added proxy and click **Enable**.
+  </Step>
+</Steps>
+
+<Note>
+  If you changed the default host or port in **Settings**, use those values instead of `127.0.0.1` and `1443`.
+</Note>
+
+## Autostart
+
+Windows builds support launching TG WS Proxy automatically when you log in. Enable or disable autostart from **Settings** — the app writes a registry entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` so it starts with your user session without requiring admin privileges.

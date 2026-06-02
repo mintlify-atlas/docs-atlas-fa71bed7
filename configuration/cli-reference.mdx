@@ -1,0 +1,180 @@
+---
+title: "TG WS Proxy CLI Reference: All Flags and Options"
+sidebarTitle: "CLI Reference"
+description: "Complete reference for tg-ws-proxy command-line flags: port, host, secret, DC mappings, Cloudflare options, Fake TLS, logging, and buffer settings."
+---
+
+The `tg-ws-proxy` command starts the MTProto WebSocket bridge proxy as a headless console process — no system tray, no GUI. It is the right choice for server deployments, Docker containers, or any environment where a graphical interface is unavailable. All settings that are stored in the tray app's `config.json` can be expressed as command-line flags.
+
+## Usage
+
+```bash
+tg-ws-proxy [OPTIONS]
+```
+
+Running the command with no options starts the proxy on `127.0.0.1:1443` with a randomly generated secret and default DC mappings.
+
+---
+
+## Connection settings
+
+<ParamField query="--host HOST" type="string" default="127.0.0.1">
+  IP address to bind and listen on. Use `0.0.0.0` to accept connections from all network interfaces.
+</ParamField>
+
+<ParamField query="--port PORT" type="integer" default="1443">
+  TCP port to listen on. The same value must be used in the Telegram Desktop proxy settings.
+</ParamField>
+
+<ParamField query="--secret SECRET" type="string">
+  MTProto proxy secret — exactly 32 hexadecimal characters (16 bytes). If omitted, a random secret is generated at startup and printed to the log. The secret is embedded in the `tg://proxy` connection link.
+
+  Generate one with:
+  ```bash
+  openssl rand -hex 16
+  ```
+</ParamField>
+
+<ParamField query="--dc-ip DC:IP" type="string">
+  Maps a Telegram DC number to an IP address. The format is `<dc_number>:<ip_address>`, for example `2:149.154.167.220`. This flag is **repeatable** — pass it once per DC you want to configure.
+
+  **Default (when not specified):**
+  ```
+  2:149.154.167.220
+  4:149.154.167.220
+  ```
+</ParamField>
+
+---
+
+## Cloudflare options
+
+<ParamField query="--no-cfproxy" type="flag">
+  Disables the Cloudflare proxy fallback entirely. When set, the proxy will not attempt to route traffic through Cloudflare-proxied domains if a direct WebSocket connection to a Telegram DC fails.
+</ParamField>
+
+<ParamField query="--cfproxy-domain DOMAIN" type="string">
+  Custom Cloudflare-proxied domain to use for the CF proxy fallback instead of the built-in default pool. **Repeatable** — pass it multiple times to supply several domains. See [Cloudflare Proxy](/configuration/cloudflare-proxy) for DNS setup instructions.
+</ParamField>
+
+<ParamField query="--cfproxy-worker-domain DOMAIN" type="string">
+  Cloudflare Worker domain for the WebSocket fallback. Worker fallback is tried **before** the CF proxy fallback. **Repeatable** — pass it multiple times for multiple workers. See [Cloudflare Worker](/configuration/cloudflare-worker) for setup instructions.
+</ParamField>
+
+---
+
+## Masking
+
+<ParamField query="--fake-tls-domain DOMAIN" type="string">
+  Enables Fake TLS (`ee`-secret) masking. The proxy will validate incoming TLS ClientHello messages against the secret and respond with a synthetic ServerHello, making the connection appear as normal HTTPS traffic to the specified SNI domain. The domain must resolve to the server where the proxy is running. See [Fake TLS + Nginx](/configuration/fake-tls-nginx) for a complete setup guide.
+</ParamField>
+
+<ParamField query="--proxy-protocol" type="flag">
+  Enables acceptance of HAProxy PROXY protocol v1 headers. Use this when the proxy is deployed behind nginx or HAProxy with `proxy_protocol on` so that the real client IP is passed through correctly. Required for the [Fake TLS + Nginx](/configuration/fake-tls-nginx) setup.
+</ParamField>
+
+---
+
+## Performance
+
+<ParamField query="--buf-kb KB" type="integer" default="256">
+  Socket send and receive buffer size in kilobytes. The effective size in bytes is `KB × 1024`. Values smaller than `4` are clamped to `4`.
+</ParamField>
+
+<ParamField query="--pool-size N" type="integer" default="4">
+  Number of WebSocket connections to pre-establish per configured DC. Set to `0` to disable connection pre-warming. Minimum accepted value is `0`.
+</ParamField>
+
+---
+
+## Logging
+
+<ParamField query="-v, --verbose" type="flag">
+  Enables `DEBUG`-level logging. Produces significantly more output than the default `INFO` level; useful for diagnosing handshake failures or fallback behaviour.
+</ParamField>
+
+<ParamField query="--log-file PATH" type="string">
+  Path to a file where logs are written with automatic rotation. When not specified, all output goes to stderr only.
+</ParamField>
+
+<ParamField query="--log-max-mb MB" type="float" default="5">
+  Maximum log file size in megabytes before the file is rotated. Values below `0.032` (32 KB) are clamped to `0.032`. Only relevant when `--log-file` is set.
+</ParamField>
+
+<ParamField query="--log-backups N" type="integer" default="0">
+  Number of rotated backup log files to keep alongside the main log file. `0` means the file is overwritten in place with no backups. Only relevant when `--log-file` is set.
+</ParamField>
+
+---
+
+## Examples
+
+<CodeGroup>
+
+```bash Standard run
+# Start with all defaults (random secret, port 1443)
+tg-ws-proxy
+```
+
+```bash Custom port and DCs
+# Listen on port 9050, configure three DCs
+tg-ws-proxy \
+  --port 9050 \
+  --dc-ip 1:149.154.175.205 \
+  --dc-ip 2:149.154.167.220 \
+  --dc-ip 4:149.154.167.91
+```
+
+```bash Verbose logging to file
+# Debug mode with a rotating log file
+tg-ws-proxy \
+  -v \
+  --log-file /tmp/tg-proxy.log \
+  --log-max-mb 10 \
+  --log-backups 2
+```
+
+```bash Fake TLS masking
+# Mask traffic as HTTPS to example.com
+tg-ws-proxy \
+  --fake-tls-domain example.com \
+  --secret <32-hex-chars>
+```
+
+```bash Cloudflare Worker fallback
+# Use a personal CF Worker as WebSocket fallback
+tg-ws-proxy \
+  --cfproxy-worker-domain myworker.myuser.workers.dev
+```
+
+```bash Behind nginx with Fake TLS
+# Full production setup with nginx PROXY protocol
+tg-ws-proxy \
+  --port 8446 \
+  --host 127.0.0.1 \
+  --fake-tls-domain example.com \
+  --proxy-protocol \
+  --secret <32-hex-chars>
+```
+
+</CodeGroup>
+
+---
+
+## Connection link format
+
+After starting, the proxy logs a `tg://proxy` link you can open in Telegram Desktop to configure it automatically. The link format depends on the mode:
+
+**Standard (dd-secret):**
+```
+tg://proxy?server=HOST&port=PORT&secret=ddSECRET
+```
+
+**Fake TLS (ee-secret):**
+```
+tg://proxy?server=HOST&port=PORT&secret=eeSECRET<domain-in-hex>
+```
+
+<Tip>
+  Generate a secure random secret with `openssl rand -hex 16`. The output is exactly 32 hexadecimal characters, ready to use as `--secret` or in `config.json`.
+</Tip>

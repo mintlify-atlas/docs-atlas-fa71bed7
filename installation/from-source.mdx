@@ -1,0 +1,133 @@
+---
+title: "Build and Run TG WS Proxy from Source"
+sidebarTitle: "From Source"
+description: "Install TG WS Proxy from source using pip, run the console proxy or platform-specific tray app, and build standalone executables with PyInstaller."
+---
+
+Building from source gives you the latest unreleased changes and full control over the runtime environment. TG WS Proxy is a standard Python package managed with [Hatch](https://hatch.pypa.io/), so a single `pip install -e .` command installs everything and registers all entry points. **Python 3.8 or later is required.**
+
+## Console Proxy
+
+To run the headless proxy without any system tray or GUI components, install the package in editable mode and invoke the `tg-ws-proxy` entry point:
+
+```bash
+pip install -e .
+tg-ws-proxy
+```
+
+The proxy starts on `127.0.0.1:1443` by default and prints the connection link to stdout. A full list of CLI flags is available with `tg-ws-proxy --help`.
+
+### CLI Arguments
+
+| Argument | Default | Description |
+|---|---|---|
+| `--port` | `1443` | Port the proxy listens on |
+| `--host` | `127.0.0.1` | Interface address the proxy binds to |
+| `--secret` | *(random)* | 32-character hex key for client authentication |
+| `--dc-ip DC:IP` | `2:149.154.167.220`, `4:149.154.167.220` | Target IP for a Telegram DC; repeat the flag for multiple DCs |
+| `--fake-tls-domain` | — | Enable Fake TLS (ee-secret) camouflage with the given SNI domain |
+| `--no-cfproxy` | `false` | Disable automatic Cloudflare proxying |
+| `--cfproxy-domain` | — | Custom domain for Cloudflare proxying (repeatable) |
+| `--cfproxy-worker-domain` | — | Cloudflare Worker domain (repeatable) |
+| `--proxy-protocol` | off | Accept HAProxy PROXY protocol v1 (for use behind nginx/haproxy) |
+| `--buf-kb` | `256` | Socket buffer size in KB |
+| `--pool-size` | `4` | Pre-warmed connections per DC |
+| `--log-file` | — | Path to a log file |
+| `--log-max-mb` | `5` | Maximum log file size in MB before rotation |
+| `--log-backups` | `0` | Number of rotated log files to keep |
+| `-v`, `--verbose` | off | Enable DEBUG-level logging |
+
+**Examples:**
+
+```bash
+# Standard run with defaults
+tg-ws-proxy
+
+# Custom port with additional DCs
+tg-ws-proxy --port 9050 --dc-ip 1:149.154.175.205 --dc-ip 2:149.154.167.220
+
+# Verbose logging
+tg-ws-proxy -v
+
+# Fake TLS camouflage
+tg-ws-proxy --fake-tls-domain example.com
+```
+
+## Tray Apps
+
+Platform-specific tray applications bundle the proxy with a GUI and are launched via dedicated entry points:
+
+<Tabs>
+  <Tab title="Windows">
+    ```bash
+    pip install -e .
+    tg-ws-proxy-tray-win
+    ```
+
+    Runs the proxy with a Windows system tray icon, settings dialog, and autostart registry integration. Supports Windows 7 and Windows 10+.
+  </Tab>
+  <Tab title="macOS">
+    ```bash
+    pip install -e .
+    tg-ws-proxy-tray-macos
+    ```
+
+    Runs the proxy as a macOS menubar application using [rumps](https://github.com/jaredks/rumps). Settings dialogs are presented via `osascript`.
+  </Tab>
+  <Tab title="Linux">
+    ```bash
+    pip install -e .
+    tg-ws-proxy-tray-linux
+    ```
+
+    Runs the proxy with an AppIndicator tray icon. Requires AppIndicator support in your desktop environment.
+  </Tab>
+</Tabs>
+
+## Dependencies
+
+Key dependencies installed by `pip install -e .` (from `pyproject.toml`):
+
+| Package | Platforms | Purpose |
+|---|---|---|
+| `cryptography` | All | MTProto cryptographic operations |
+| `psutil` | All | Process and network utilities |
+| `pyperclip` | All | Clipboard access for the **Copy Link** action |
+| `Pillow` | All | Tray icon image handling |
+| `pystray` | Windows, Linux | System tray integration |
+| `customtkinter` | Windows, Linux | Settings and first-launch GUI dialogs |
+| `rumps` | macOS | Native macOS menubar framework |
+
+<Note>
+  On Windows with Python &lt; 3.9, slightly older pinned versions of `psutil`, `cryptography`, and `Pillow` are used for compatibility. All other platforms and Python versions use the latest pinned releases.
+</Note>
+
+## Entry Points
+
+The following entry points are registered in `pyproject.toml`:
+
+| Command | Module | Description |
+|---|---|---|
+| `tg-ws-proxy` | `proxy.tg_ws_proxy:main` | Headless console proxy |
+| `tg-ws-proxy-tray-win` | `windows:main` | Windows tray application |
+| `tg-ws-proxy-tray-macos` | `macos:main` | macOS menubar application |
+| `tg-ws-proxy-tray-linux` | `linux:main` | Linux tray application |
+
+## Building Standalone Executables
+
+Release binaries are produced with [PyInstaller](https://pyinstaller.org/) using platform-specific spec files:
+
+| Spec file | Target |
+|---|---|
+| `packaging/windows.spec` | Windows `.exe` |
+| `packaging/macos.spec` | macOS `.app` / DMG |
+| `packaging/linux.spec` | Linux binary / `.deb` |
+
+The full build pipeline is defined in `.github/workflows/build.yml` and runs automatically on GitHub Actions for every tagged release. To reproduce a build locally, install PyInstaller and run the appropriate spec:
+
+```bash
+pip install pyinstaller
+pyinstaller packaging/windows.spec   # or macos.spec / linux.spec
+```
+
+The output binary will appear in the `dist/` directory.

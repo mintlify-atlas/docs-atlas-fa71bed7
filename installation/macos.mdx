@@ -1,0 +1,97 @@
+---
+title: "Install TG WS Proxy on macOS"
+sidebarTitle: "macOS"
+description: "Install TG WS Proxy on macOS using the universal DMG for Apple Silicon and Intel, with menubar integration and one-click Telegram setup."
+---
+
+TG WS Proxy is a local MTProto proxy that routes Telegram Desktop traffic over WebSocket connections. On macOS it ships as a native menubar application, supporting both Apple Silicon and Intel Macs in a single universal binary — no Homebrew, no Python installation, and no terminal required.
+
+## Download
+
+Download `TgWsProxy_macos_universal.dmg` from the [releases page](https://github.com/Flowseal/tg-ws-proxy/releases). The DMG contains a universal binary that runs natively on both Apple Silicon and Intel processors.
+
+**Minimum supported macOS versions:**
+
+| Architecture | Minimum version |
+|---|---|
+| Intel | macOS 10.15 Catalina |
+| Apple Silicon | macOS 11.0 Big Sur |
+
+## Installation
+
+<Steps>
+  <Step title="Open the DMG">
+    Double-click `TgWsProxy_macos_universal.dmg` to mount the disk image. A Finder window opens showing the app and an Applications shortcut.
+  </Step>
+  <Step title="Drag to Applications">
+    Drag **TG WS Proxy.app** onto the **Applications** folder shortcut inside the disk image window.
+  </Step>
+  <Step title="Handle macOS Gatekeeper on first launch">
+    Because the app is not notarised through the Mac App Store, macOS Gatekeeper may block it on the first run with a message such as *"cannot be opened because the developer cannot be verified."* To allow it:
+
+    1. Open **System Settings** (or **System Preferences** on older macOS) and go to **Privacy & Security**.
+    2. Scroll down to the Security section where you will see a message about TG WS Proxy being blocked.
+    3. Click **Open Anyway**, then confirm in the dialog that follows.
+
+    You will only need to do this once.
+  </Step>
+</Steps>
+
+<Note>
+  TG WS Proxy runs as a **menubar app** — you will not see it in the Dock. Look for the proxy icon in the menu bar at the top of your screen after launch.
+</Note>
+
+## Menubar App
+
+Click the TG WS Proxy icon in the macOS menu bar to access all controls:
+
+| Item | Description |
+|---|---|
+| **Open in Telegram** | Opens Telegram Desktop and automatically applies the proxy via a `tg://proxy` link |
+| **Copy Link** | Copies the `tg://proxy` connection link to the clipboard |
+| **Restart Proxy** | Restarts the proxy process without quitting the menubar app |
+| **Settings…** | Opens a settings dialog (via `osascript`) to manage the secret, port, and update checks |
+| **Open Logs** | Opens the log file in your default text editor |
+| **Exit** | Stops the proxy and removes the icon from the menu bar |
+
+## Connect Telegram Desktop
+
+### Automatic
+
+Click the menubar icon and choose **Open in Telegram**. Telegram Desktop will open and prompt you to confirm the proxy — click **Enable**.
+
+If Telegram does not respond to the link automatically, use the fallback:
+
+<Steps>
+  <Step title="Copy the link">
+    Click the menubar icon and choose **Copy Link**.
+  </Step>
+  <Step title="Send to Saved Messages">
+    In Telegram Desktop, open your **Saved Messages** chat, paste the link, and send it.
+  </Step>
+  <Step title="Activate the proxy">
+    Click the link in Saved Messages. Telegram will ask you to enable the proxy — confirm to connect.
+  </Step>
+</Steps>
+
+### Manual
+
+<Steps>
+  <Step title="Open Telegram proxy settings">
+    In Telegram Desktop go to **Settings → Advanced → Connection type**, then select **Use custom proxy**.
+  </Step>
+  <Step title="Add a new proxy">
+    Click **Add proxy** and fill in the fields:
+    - **Type:** MTProto
+    - **Server:** `127.0.0.1`
+    - **Port:** `1443`
+    - **Secret:** copy from the **Settings** dialog or the log file
+  </Step>
+  <Step title="Save and connect">
+    Click **Save**, select the new proxy entry, and click **Enable**.
+  </Step>
+</Steps>
+
+<Note>
+  If you customised the host or port in **Settings**, use those values instead of the defaults above.
+</Note>

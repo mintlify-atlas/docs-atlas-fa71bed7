@@ -1,47 +1,190 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with TG WS Proxy in 3 Steps"
+sidebarTitle: "Quickstart"
+description: "Install TG WS Proxy and connect Telegram Desktop to a local MTProto proxy in under two minutes on Windows, macOS, or Linux."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
+TG WS Proxy (v1.7.1) is a local MTProto proxy that bridges Telegram Desktop traffic over WebSocket connections, improving connectivity in restricted networks. It runs entirely on your own machine — no third-party servers required. Follow the steps below to install, launch, and connect Telegram Desktop in under two minutes.
 
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+## Install & Launch
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+  <Step title="Download or install TG WS Proxy">
 
-    ```bash
-    npm install your-package
-    ```
+    <Tabs>
+      <Tab title="Windows">
+        <Warning>
+          Windows builds are occasionally flagged as false positives by antivirus software due to the PyInstaller packer used to bundle the application. If your antivirus blocks the download or prevents the executable from running, add the file to your antivirus exclusions and re-download. You can inspect all detections on [VirusTotal](https://www.virustotal.com) and verify that no major antivirus engine flags it. Alternatively, download the **Windows 7** build — it is functionally identical and is typically flagged less often.
+        </Warning>
+
+        Go to the [GitHub Releases page](https://github.com/Flowseal/tg-ws-proxy/releases) and download the appropriate binary:
+
+        | File | Requirement |
+        |------|-------------|
+        | `TgWsProxy_windows.exe` | Windows 10 or later |
+        | `TgWsProxy_windows_7_64bit.exe` | Windows 7 x64 |
+        | `TgWsProxy_windows_7_32bit.exe` | Windows 7 x32 |
+
+        Double-click the downloaded `.exe` to launch. On first run an instruction window opens automatically. The application then minimises to the **system tray**.
+      </Tab>
+
+      <Tab title="macOS">
+        Go to the [GitHub Releases page](https://github.com/Flowseal/tg-ws-proxy/releases) and download `TgWsProxy_macos_universal.dmg` (universal binary for both Apple Silicon and Intel).
+
+        Minimum supported versions:
+        - **Intel Mac**: macOS 10.15 (Catalina) or later
+        - **Apple Silicon**: macOS 11.0 (Big Sur) or later
+
+        1. Open the `.dmg` image.
+        2. Drag **TG WS Proxy.app** to your **Applications** folder.
+        3. Launch the app. If macOS shows a security prompt, open **System Settings → Privacy & Security** and click **Open Anyway**.
+
+        The application runs in the **menu bar**.
+      </Tab>
+
+      <Tab title="Linux">
+        **Debian / Ubuntu** — download the `.deb` package from the [GitHub Releases page](https://github.com/Flowseal/tg-ws-proxy/releases):
+
+        ```bash
+        sudo dpkg -i TgWsProxy_linux_amd64.deb
+        tg-ws-proxy-tray-linux
+        ```
+
+        **Arch Linux** — install from AUR:
+
+        ```bash
+        # With an AUR helper
+        paru -S tg-ws-proxy-bin
+
+        # Without an AUR helper
+        git clone https://aur.archlinux.org/tg-ws-proxy-bin.git
+        cd tg-ws-proxy-bin
+        makepkg -si
+        ```
+
+        **Other x86_64 distros** — use the standalone binary:
+
+        ```bash
+        chmod +x TgWsProxy_linux_amd64
+        ./TgWsProxy_linux_amd64
+        ```
+
+        <Note>
+          The tray icon requires **AppIndicator** support. If your desktop environment does not have it, run the proxy in headless CLI mode instead (see the CLI tab).
+        </Note>
+      </Tab>
+
+      <Tab title="Docker">
+        Build and run the proxy from the published source:
+
+        ```bash
+        # Clone the repository
+        git clone https://github.com/Flowseal/tg-ws-proxy.git
+        cd tg-ws-proxy
+
+        # Build the image
+        docker build -t tg-ws-proxy .
+
+        # Run the container
+        docker run -d \
+          --name tg-ws-proxy \
+          --restart=always \
+          -p 1443:1443 \
+          tg-ws-proxy:latest
+
+        # Retrieve the connection link
+        docker logs tg-ws-proxy 2>&1 | grep 'tg://proxy'
+        ```
+
+        The log output contains a ready-to-use `tg://proxy?...` link. Configure optional settings with environment variables:
+
+        | Variable | Default | Description |
+        |----------|---------|-------------|
+        | `TG_WS_PROXY_HOST` | `0.0.0.0` | Listen address inside the container |
+        | `TG_WS_PROXY_PORT` | `1443` | Listen port inside the container |
+        | `TG_WS_PROXY_SECRET` | random | 32-character hex proxy secret |
+        | `TG_WS_PROXY_DC_IPS` | `2:149.154.167.220 4:149.154.167.220` | Space-separated `DC:IP` pairs |
+
+        Example with a custom secret:
+
+        ```bash
+        docker run -d \
+          --name tg-ws-proxy \
+          --restart=always \
+          -p 1443:1443 \
+          -e TG_WS_PROXY_SECRET="$(openssl rand -hex 16)" \
+          tg-ws-proxy:latest
+        ```
+      </Tab>
+    </Tabs>
+
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
 
-    ```bash
-    your-cli init
-    ```
+  <Step title="Connect Telegram Desktop">
+
+    Once the proxy is running, point Telegram Desktop at it using one of the two methods below.
+
+    **Option 1 — Automatic (recommended)**
+
+    Right-click (or click) the **TG WS Proxy** tray icon and choose **Open in Telegram**. Telegram Desktop opens with the proxy pre-configured and asks you to confirm the connection. Click **Enable** and you are done.
+
+    If Telegram does not open automatically:
+    1. Choose **Copy Link** from the tray menu.
+    2. Paste the link into your **Saved Messages** chat in Telegram and click it.
+    3. Confirm the connection prompt.
+
+    **Option 2 — Manual**
+
+    1. Open Telegram Desktop and go to **Settings → Advanced → Connection Type → Use custom proxy**.
+    2. Click **Add proxy** and fill in the fields:
+
+    | Field | Value |
+    |-------|-------|
+    | Type | MTProto |
+    | Server | `127.0.0.1` |
+    | Port | `1443` |
+    | Secret | Copy from the proxy tray menu (**Settings**) or from the log file |
+
+    3. Click **Save** and then **Enable**.
+
   </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
 
-    ```bash
-    your-cli start
+  <Step title="Verify the connection">
+
+    After enabling the proxy, Telegram Desktop shows a green connection indicator in the connection type settings. You can also inspect the proxy log to confirm traffic is flowing:
+
+    - **Tray app**: right-click the tray icon and choose **Open Logs**.
+    - **CLI mode**: logs are printed to `stderr` by default. Add `--log-file proxy.log` to write them to a file.
+
+    A successful session looks like this in the log:
+
     ```
+    12:34:56  INFO   [127.0.0.1:54321] DC2 -> pool hit via 149.154.167.220
+    12:34:57  INFO   [127.0.0.1:54321] DC2 WS session closed: ^1.2KB (3 pkts) v18.4KB (12 pkts) in 2.3s
+    ```
+
+    If you see `WS connect failed` lines followed by `fallback`, the primary WebSocket path is blocked in your network and the proxy has automatically switched to a Cloudflare-proxied fallback — this is expected behaviour and connections will still work.
+
+    <Tip>
+      Enable verbose logging with the `-v` flag (`tg-ws-proxy -v`) or via **Settings → Verbose logging** in the tray app to see full handshake details and per-DC pool activity.
+    </Tip>
+
   </Step>
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## Next Steps
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
-</Tip>
+<CardGroup cols={2}>
+  <Card title="CLI Reference" icon="terminal" href="/configuration/cli-reference">
+    All command-line flags, environment variables, and configuration options for the headless proxy.
+  </Card>
+  <Card title="Cloudflare Proxy" icon="cloud" href="/configuration/cloudflare-proxy">
+    Set up your own Cloudflare-proxied domain for the fallback chain to bypass stricter blocks.
+  </Card>
+  <Card title="Cloudflare Worker" icon="bolt" href="/configuration/cloudflare-worker">
+    Deploy a free Cloudflare Worker to proxy WebSocket traffic to Telegram DCs.
+  </Card>
+  <Card title="Fake TLS Setup" icon="shield" href="/configuration/fake-tls-nginx">
+    Configure the `ee`-secret mode with SNI masking and an Nginx upstream for maximum stealth.
+  </Card>
+</CardGroup>

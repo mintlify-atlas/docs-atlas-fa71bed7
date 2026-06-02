@@ -1,0 +1,94 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "TG WS Proxy",
+  "projectDescription": "A local MTProto proxy for Telegram Desktop that routes traffic over WebSocket connections to bypass loading issues, with GUI tray apps for Windows, macOS, and Linux.",
+  "theme": "aspen",
+  "primaryColor": "#669ed8",
+  "lightColor": "#1f2020",
+  "darkColor": "#bcbcbc",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "how-it-works",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Installation",
+            "pages": [
+              "installation/windows",
+              "installation/macos",
+              "installation/linux",
+              "installation/docker",
+              "installation/from-source"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/tray-config",
+              "configuration/cli-reference",
+              "configuration/cloudflare-proxy",
+              "configuration/cloudflare-worker",
+              "configuration/fake-tls-nginx"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/architecture",
+              "reference/troubleshooting",
+              "reference/contributing"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Local MTProto proxy that bridges Telegram Desktop over WebSocket (TLS) to bypass restrictions",
+    "System tray GUI applications for Windows, macOS, and Linux with one-click setup",
+    "Automatic Cloudflare-proxy fallback when WebSocket connections fail",
+    "Cloudflare Worker support as a free alternative to CF-proxy domains",
+    "Fake TLS masking (ee-secret) with configurable SNI domain for nginx/haproxy integration",
+    "Connection pooling per Telegram DC with configurable pool size",
+    "Docker support for server-side deployment with environment variable configuration",
+    "Automatic update checks with optional in-app download on Windows",
+    "PROXY protocol v1 support for use behind nginx or haproxy"
+  ],
+  "publicApiSurface": [
+    "tg-ws-proxy (CLI entry point)",
+    "tg-ws-proxy-tray-win (Windows tray entry point)",
+    "tg-ws-proxy-tray-macos (macOS menubar entry point)",
+    "tg-ws-proxy-tray-linux (Linux tray entry point)",
+    "--port PORT (listen port, default 1443)",
+    "--host HOST (listen host, default 127.0.0.1)",
+    "--secret SECRET (32 hex-char MTProto secret)",
+    "--dc-ip DC:IP (target IP for a Telegram DC, repeatable)",
+    "--no-cfproxy (disable Cloudflare proxy fallback)",
+    "--cfproxy-domain DOMAIN (custom Cloudflare-proxied domain)",
+    "--cfproxy-worker-domain DOMAIN (Cloudflare Worker domain)",
+    "--fake-tls-domain DOMAIN (enable Fake TLS ee-secret masking)",
+    "--proxy-protocol (accept HAProxy PROXY protocol v1)",
+    "--buf-kb KB (socket buffer size, default 256)",
+    "--pool-size N (WS connection pool size per DC, default 4)",
+    "--log-file PATH (log to rotating file)",
+    "--log-max-mb MB (max log file size before rotation)",
+    "-v / --verbose (debug logging)",
+    "TG_WS_PROXY_HOST (Docker env var)",
+    "TG_WS_PROXY_PORT (Docker env var)",
+    "TG_WS_PROXY_SECRET (Docker env var)",
+    "TG_WS_PROXY_DC_IPS (Docker env var)",
+    "proxy_config (ProxyConfig dataclass)",
+    "parse_dc_ip_list(dc_ip_list) -> Dict[int, str]",
+    "coerce_domain_list(value) -> List[str]",
+    "get_link_host(host) -> str",
+    "run_proxy(stop_event) (programmatic API)"
+  ]
+}

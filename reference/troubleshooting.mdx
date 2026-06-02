@@ -1,0 +1,174 @@
+---
+title: "TG WS Proxy Troubleshooting Guide"
+sidebarTitle: "Troubleshooting"
+description: "Fix common TG WS Proxy issues: antivirus blocks, port conflicts, media not loading, IPv6 problems, Cloudflare fallback failures, and log file locations."
+---
+
+The first step when diagnosing any issue is to open the proxy log. Right-click the tray icon and select **Open logs** — this opens the rotating log file in your default text viewer. Most problems produce a clear warning or error line within the first few seconds of a failed connection attempt. The sections below walk through the most common issues and their fixes.
+
+## Log File Locations
+
+The log file is written to your platform's standard application data directory:
+
+| Platform | Path |
+|---|---|
+| Windows | `%APPDATA%\TgWsProxy\proxy.log` |
+| macOS | `~/Library/Application Support/TgWsProxy/proxy.log` |
+| Linux | `~/.config/TgWsProxy/proxy.log` |
+
+---
+
+## Common Issues
+
+<AccordionGroup>
+
+<Accordion title="Antivirus blocks the Windows executable">
+
+Windows binaries are built with **PyInstaller**, which bundles a Python interpreter and all dependencies into a single executable. Many antivirus engines flag this packaging technique as a heuristic false positive — the file is not malware.
+
+**Solutions (in order of preference):**
+
+1. Check the file on [VirusTotal](https://www.virustotal.com). If only a handful of obscure engines flag it while well-known engines (Microsoft Defender, Kaspersky, ESET) report it as clean, it is a false positive.
+2. Add the executable to your antivirus exclusion list, then re-download and run the file.
+3. Download the **Windows 7 build** (`TgWsProxy_windows_7_64bit.exe` or `TgWsProxy_windows_7_32bit.exe`) — it uses a different PyInstaller configuration and may not trigger the same signatures.
+4. Build from source (see [Contributing](/reference/contributing)) to produce a binary your local environment trusts entirely.
+
+</Accordion>
+
+<Accordion title="Port is already in use">
+
+**Symptoms:** The proxy fails to start and the log contains `Address already in use` (Linux/macOS) or error code `10048` (Windows).
+
+**Causes and fixes:**
+
+- Another instance of TG WS Proxy is already running. Check the system tray or task manager for an existing process and close it first.
+- A different application has claimed port `1443`. Open **Settings** in the tray menu and change the listen port to any unused port above `1024` (e.g. `1444`). After saving, click **Open in Telegram** to generate a new `tg://proxy` link with the updated port.
+
+</Accordion>
+
+<Accordion title="Photos and videos not loading">
+
+This is the most common issue and typically affects accounts **without Telegram Premium**.
+
+**Step 1 — Restrict the DC redirect list:**
+
+Open **Settings → DC → IP** and remove every entry except:
+
+```
+4:149.154.167.220
+```
+
+Save and restart the proxy.
+
+**Step 2 — Clear the DC → IP field entirely:**
+
+If step 1 does not help, delete all entries from the DC → IP field and save. The proxy will route every DC through the fallback chain rather than attempting direct WebSocket connections.
+
+**Step 3 — Configure a Cloudflare proxy domain:**
+
+If neither step above resolves the issue, you need a Cloudflare-proxied domain with the `kws*` DNS records configured. Follow the guide at [Cloudflare Proxy](/configuration/cloudflare-proxy) and add your domain in **Settings → CF Proxy domain**.
+
+</Accordion>
+
+<Accordion title="IPv6 warning on startup">
+
+TG WS Proxy does not support IPv6 transport to Telegram's data centres — all outbound connections are made over IPv4 WebSocket or TCP.
+
+**Fix:**
+
+In **Telegram Desktop → Settings → Advanced → Connection Type → Proxy**, disable the **"Try IPv6"** (or equivalent) option so that Telegram only initiates IPv4 connections through the proxy.
+
+Alternatively, you can disable IPv6 at the operating-system level if you do not use it for other applications.
+
+</Accordion>
+
+<Accordion title="Proxy isn't being used by Telegram">
+
+**Checklist:**
+
+1. Confirm the proxy is running — the tray icon must be visible in the system notification area.
+2. Right-click the tray icon and select **Open in Telegram**. This opens a `tg://proxy` deep link that automatically configures Telegram Desktop.
+3. If the deep link does not work, select **Copy link** from the tray menu. Paste the link into **Telegram → Saved Messages**, then tap it to open the proxy connection dialog.
+4. Verify the settings manually: **Telegram Desktop → Settings → Advanced → Connection Type → Use custom proxy** — check that the server is `127.0.0.1`, the port matches the configured value (default `1443`), and the secret matches what is shown in **Settings**.
+
+<Note>
+TG WS Proxy only works with **Telegram Desktop** (the official desktop client). It is not compatible with Telegram X, Telegram for Android, or Telegram for iOS.
+</Note>
+
+</Accordion>
+
+<Accordion title="Cloudflare proxy or Worker not connecting">
+
+**CF Worker domains:**
+
+Ensure that `cloudflare.com`, `cloudflare.dev`, and `workers.dev` are not blocked by your local firewall, VPN, or network filtering software. Worker scripts are served from the `workers.dev` subdomain by default.
+
+**CF proxy domains:**
+
+The `kws*.yourdomain.com` subdomains resolve to Cloudflare's IP ranges (e.g. `104.x.x.x`, `172.64.x.x`). In some regions (notably Russia) these ranges are partially blocked. Add your CF proxy domain to any bypass software (such as zapret) to route it around local restrictions.
+
+**Connection limits:**
+
+The built-in default domains are shared across all users of TG WS Proxy and may hit Cloudflare's concurrent WebSocket connection limits during peak hours. Configure a **custom domain** in **Settings → CF Proxy domain** to avoid hitting those limits. See the [Cloudflare Proxy setup guide](/configuration/cloudflare-proxy) for DNS record configuration.
+
+</Accordion>
+
+<Accordion title="Reactions, stickers, or media partially missing">
+
+Reactions, animated stickers, and some media thumbnails are fetched from **DC2** and **DC4**. If your DC → IP list only contains an entry for DC4, add a DC2 mapping:
+
+```
+2:149.154.167.220
+4:149.154.167.220
+```
+
+If the problem persists after adding DC2, set up a **Cloudflare Worker** for more reliable fallback routing. The Worker path (`/apiws?dst=<ip>&dc=<n>`) is tried before CF proxy domains, giving better latency and fewer connection-limit errors.
+
+</Accordion>
+
+<Accordion title="Application already running error">
+
+TG WS Proxy uses a **PID lock file** to prevent multiple simultaneous instances from binding the same port. On Windows, a named mutex (`Local\TgWsProxy_SingleInstance`) is also used.
+
+If the application crashed without cleaning up the lock, subsequent launches will report that an instance is already running even though no process exists.
+
+**Fix:**
+
+1. Open the app data directory:
+   - Windows: `%APPDATA%\TgWsProxy\`
+   - macOS: `~/Library/Application Support/TgWsProxy/`
+   - Linux: `~/.config/TgWsProxy/`
+2. Delete any `.lock` files in that directory.
+3. Launch TG WS Proxy again.
+
+On Windows, if a stale mutex is still registered in the kernel session, a full reboot will clear it.
+
+</Accordion>
+
+</AccordionGroup>
+
+---
+
+## Enable Verbose Logging
+
+By default the proxy logs at `INFO` level. To capture `DEBUG`-level output (including per-packet details, pool hits/misses, and TLS handshake traces):
+
+**GUI (tray app):** Open **Settings** and enable the **Verbose logging** toggle, then click **Restart proxy**.
+
+**CLI:** Pass the `-v` / `--verbose` flag:
+
+```bash
+tg-ws-proxy -v --log-file proxy.log
+```
+
+<Warning>
+Verbose mode generates a large volume of log output. Disable it again once you have captured the relevant trace to avoid filling your disk.
+</Warning>
+
+---
+
+## Getting Help
+
+If none of the steps above resolve your issue, open a bug report on GitHub. Include your app version, operating system, the relevant section of your log file (with any sensitive secrets redacted), and the steps needed to reproduce the problem.
+
+[Open an issue on GitHub →](https://github.com/Flowseal/tg-ws-proxy/issues)

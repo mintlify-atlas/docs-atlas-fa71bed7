@@ -1,0 +1,130 @@
+---
+title: "Tray App Configuration File Reference"
+sidebarTitle: "Tray Config"
+description: "Reference for the TG WS Proxy tray app JSON config file: location per OS, all config keys, defaults, and how settings map to proxy behavior."
+---
+
+The TG WS Proxy tray application stores its configuration in a JSON file inside a platform-specific application data directory. On first run the file is created automatically with sensible defaults — including a freshly generated random secret. You can edit the file directly in any text editor or adjust settings through the built-in Settings dialog; either way, a proxy restart is required for changes to take effect.
+
+## Config file location
+
+| Platform | Path |
+|----------|------|
+| **Windows** | `%APPDATA%\TgWsProxy\config.json` |
+| **macOS** | `~/Library/Application Support/TgWsProxy/config.json` |
+| **Linux** | `~/.config/TgWsProxy/config.json` (or `$XDG_CONFIG_HOME/TgWsProxy/config.json`) |
+
+The log file (`proxy.log`) is written to the same directory as `config.json`.
+
+## Full config example
+
+```json
+{
+  "host": "127.0.0.1",
+  "port": 1443,
+  "secret": "<32 hex chars>",
+  "dc_ip": [
+    "2:149.154.167.220",
+    "4:149.154.167.220"
+  ],
+  "verbose": false,
+  "buf_kb": 256,
+  "pool_size": 4,
+  "log_max_mb": 5.0,
+  "check_updates": true,
+  "cfproxy": true,
+  "cfproxy_user_domain": [],
+  "cfproxy_worker_domain": [],
+  "appearance": "auto"
+}
+```
+
+## Config key reference
+
+<ParamField body="host" type="string" default="127.0.0.1">
+  The IP address the proxy server binds to and listens on. Use `0.0.0.0` to accept connections on all network interfaces, or keep the default `127.0.0.1` for local-only access.
+</ParamField>
+
+<ParamField body="port" type="integer" default="1443">
+  The TCP port the proxy listens on. Telegram Desktop must be configured to connect to this port. Change it if `1443` conflicts with another service.
+</ParamField>
+
+<ParamField body="secret" type="string">
+  The MTProto proxy secret — exactly 32 hexadecimal characters (16 bytes). A unique value is auto-generated on first run. This secret is included in the `tg://proxy` connection link that you share with Telegram Desktop. Treat it like a password; regenerate it if you believe it has been compromised.
+</ParamField>
+
+<ParamField body="dc_ip" type="array of strings" default='["2:149.154.167.220", "4:149.154.167.220"]'>
+  A list of `DC:IP` mappings that tell the proxy which Telegram data-center IP address to reach for a given DC number. Each entry follows the format `"<dc_number>:<ip_address>"`. You can add entries for all five Telegram DCs (1–5) or keep only the ones you need.
+
+  ```json
+  "dc_ip": [
+    "1:149.154.175.205",
+    "2:149.154.167.220",
+    "3:149.154.175.100",
+    "4:149.154.167.91",
+    "5:149.154.171.5"
+  ]
+  ```
+</ParamField>
+
+<ParamField body="verbose" type="boolean" default="false">
+  When `true`, the proxy writes `DEBUG`-level log entries in addition to the normal `INFO` messages. Useful for diagnosing connection issues. Has a noticeable impact on log volume; disable it again once the issue is resolved.
+</ParamField>
+
+<ParamField body="buf_kb" type="integer" default="256">
+  Socket send and receive buffer size in kilobytes. Larger values can improve throughput on fast connections; smaller values reduce memory usage when many clients connect simultaneously. The effective byte size is `buf_kb × 1024`.
+</ParamField>
+
+<ParamField body="pool_size" type="integer" default="4">
+  Number of pre-established WebSocket connections kept warm in the pool for each configured DC. A higher value reduces latency for new client connections at the cost of slightly more background traffic. Set to `0` to disable pre-warming entirely.
+</ParamField>
+
+<ParamField body="log_max_mb" type="float" default="5.0">
+  Maximum size of the `proxy.log` file in megabytes before it is rotated (overwritten from the beginning). Keeps disk usage predictable. The minimum effective value is `0.032 MB` (32 KB) — values below that are clamped.
+</ParamField>
+
+<ParamField body="check_updates" type="boolean" default="true">
+  When `true`, the tray app checks the TG WS Proxy GitHub releases page shortly after startup and displays a notification if a newer version is available. No automatic download or installation takes place — you receive only a link to the release page.
+</ParamField>
+
+<ParamField body="cfproxy" type="boolean" default="true">
+  Enables the Cloudflare proxy fallback mechanism. When direct WebSocket connections to a Telegram DC fail, the proxy attempts to route traffic through Cloudflare-proxied domains (`kws1`–`kws5` and `kws203` subdomains). Disable this only if you are certain direct connections work reliably or if you manage fallback yourself.
+</ParamField>
+
+<ParamField body="cfproxy_user_domain" type="string or array" default="[]">
+  One or more custom Cloudflare-proxied domain(s) to use instead of the built-in default domains for the CF proxy fallback. Accepts a single domain string (`"yourdomain.com"`) or an array of strings (`["yourdomain.com", "otherdomain.com"]`). Leave empty (`[]`) to use the automatically managed default pool. See [Cloudflare Proxy](/configuration/cloudflare-proxy) for setup instructions.
+</ParamField>
+
+<ParamField body="cfproxy_worker_domain" type="string or array" default="[]">
+  One or more Cloudflare Worker domain(s) to use as a WebSocket fallback. Worker fallback is attempted before the CF proxy fallback. Accepts a single domain string or an array of strings. Leave empty (`[]` or `""`) to disable. See [Cloudflare Worker](/configuration/cloudflare-worker) for setup instructions.
+</ParamField>
+
+<ParamField body="appearance" type="string" default='"auto"'>
+  Controls the UI theme of the tray Settings dialog. Accepted values:
+
+  | Value | Behavior |
+  |-------|----------|
+  | `"auto"` | Follows the system light/dark preference |
+  | `"dark"` | Forces dark mode |
+  | `"light"` | Forces light mode |
+</ParamField>
+
+<ParamField body="autostart" type="boolean" default="false">
+  **(Windows only)** When `true`, TG WS Proxy is registered to start automatically when you log in to Windows. This key is only present in the config file on Windows; it has no effect on macOS or Linux.
+</ParamField>
+
+## Log file
+
+The rotating log file is written to the same directory as `config.json`:
+
+| Platform | Log path |
+|----------|----------|
+| **Windows** | `%APPDATA%\TgWsProxy\proxy.log` |
+| **macOS** | `~/Library/Application Support/TgWsProxy/proxy.log` |
+| **Linux** | `~/.config/TgWsProxy/proxy.log` |
+
+Log verbosity is controlled by the `verbose` key; maximum file size is controlled by `log_max_mb`. When the file reaches the size limit it is overwritten from the start (no backup copies are kept by the tray app).
+
+<Note>
+  Changes to `config.json` do not take effect immediately. After saving the file, restart the proxy using the **Restart** option in the tray menu, or close and reopen the Settings dialog and click **Restart**. Settings changed through the Settings dialog are saved and applied automatically on restart.
+</Note>
